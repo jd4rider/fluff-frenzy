@@ -21,12 +21,16 @@ export function moveBonus(runs: Run[], chain: number): number {
   return 0
 }
 
-export function scoreStep(runs: Run[], chain: number, fever: boolean, golden: number): number {
+/**
+ * A clear is paid for the fluffs it actually removes, so a big connected group
+ * beats a handful of small ones and overlapping line/cluster matches in the
+ * same step are never paid twice.
+ */
+export function scoreStep(runs: Run[], chain: number, fever: boolean, golden: number, cleared = 0): number {
   if (runs.length === 0) return 0
-  let base = 0
-  for (const run of runs) base += runScore(run.length)
-  base += Math.max(0, runs.length - 1) * 75
-  base += golden * 250
+  let base = cleared * 22 + runs.length * 45
+  base += Math.max(0, runs.length - 1) * 60
+  base += golden * 150
   const total = base * chainMultiplier(chain) * (fever ? 2 : 1)
   return Math.round(total)
 }

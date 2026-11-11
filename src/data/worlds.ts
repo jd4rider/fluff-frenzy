@@ -25,7 +25,8 @@ export const WORLDS: World[] = [
     ground: '#5fbb62',
     accent: '#f7b731',
     motif: 'meadow',
-    colors: 5,
+    // Six colours keeps connected groups rare enough to need real play.
+    colors: 6,
   },
   {
     id: 1,
@@ -35,7 +36,7 @@ export const WORLDS: World[] = [
     ground: '#f291c4',
     accent: '#ff6fa5',
     motif: 'clouds',
-    colors: 5,
+    colors: 6,
   },
   {
     id: 2,

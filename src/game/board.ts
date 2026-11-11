@@ -101,9 +101,43 @@ function lineRuns(board: Board, axis: Axis, line: number, color: number): Run[] 
   return runs
 }
 
+/** Every same-colour group connected through shared edges (never diagonals). */
+function floodColour(board: Board, start: number, color: number, seen: Set<number>): number[] {
+  const group: number[] = []
+  const queue = [start]
+  seen.add(start)
+  while (queue.length > 0) {
+    const index = queue.pop()!
+    group.push(index)
+    const row = rowOf(board, index)
+    const col = colOf(board, index)
+    const neighbours = [
+      [row - 1, col],
+      [row + 1, col],
+      [row, col - 1],
+      [row, col + 1],
+    ] as const
+    for (const [r, c] of neighbours) {
+      if (r < 0 || c < 0 || r >= board.rows || c >= board.cols) continue
+      const next = indexOf(board, r, c)
+      if (seen.has(next)) continue
+      const cell = board.cells[next]!
+      // A rainbow only joins a group through its line wildcard.
+      if (cell.color !== color || cell.special === 'rainbow') continue
+      seen.add(next)
+      queue.push(next)
+    }
+  }
+  return group
+}
+
 /**
- * Finds every horizontal and vertical run of three or more. Matching never
- * wraps around the board edge; only movement does.
+ * Finds every match on the board. As in Chuzzle, a match is any connected
+ * group of three or more same-coloured fluffs: a straight line, an L, a T or a
+ * blob, always through shared edges and never diagonally. Line sweeps run first
+ * so a rainbow wildcard keeps its line power, and a group already covered by
+ * those sweeps is not counted twice. Matching never wraps around the board
+ * edge; only movement does.
  */
 export function findRuns(board: Board): Run[] {
   const runs: Run[] = []
@@ -112,6 +146,18 @@ export function findRuns(board: Board): Run[] {
   }
   for (let col = 0; col < board.cols; col += 1) {
     for (let color = 0; color < PALETTE_SIZE; color += 1) runs.push(...lineRuns(board, 'col', col, color))
+  }
+
+  const covered = runCellSet(runs)
+  const seen = new Set<number>()
+  for (let index = 0; index < board.cells.length; index += 1) {
+    if (seen.has(index)) continue
+    const cell = board.cells[index]!
+    if (cell.color < 0 || cell.special === 'rainbow') continue
+    const group = floodColour(board, index, cell.color, seen)
+    if (group.length < 3) continue
+    if (group.every((cell) => covered.has(cell))) continue
+    runs.push({ axis: 'row', cells: group, color: cell.color, length: group.length })
   }
   return runs
 }
@@ -230,23 +276,48 @@ function pickColor(rng: Rand, colors: number): number {
   return Math.min(colors - 1, Math.floor(rng.next() * colors))
 }
 
-/** A board with no starting matches, so the first move is the player's. */
+/** True when putting `color` here would make a same-colour group of three. */
+function wouldFormGroup(board: Board, row: number, col: number, color: number): boolean {
+  const neighbours = [
+    [row - 1, col],
+    [row + 1, col],
+    [row, col - 1],
+    [row, col + 1],
+  ] as const
+  const seen = new Set<number>()
+  let size = 1
+  for (const [r, c] of neighbours) {
+    if (r < 0 || c < 0 || r >= board.rows || c >= board.cols) continue
+    const index = indexOf(board, r, c)
+    if (seen.has(index)) continue
+    if (board.cells[index]!.color !== color) continue
+    size += floodColour(board, index, color, seen).length
+  }
+  return size >= 3
+}
+
+/**
+ * A board that opens quiet: no line of three and no connected group of three,
+ * so the first pop is always the one the player just made.
+ */
 export function randomBoard(cols: number, rows: number, colors: number, rng: Rand): Board {
   const board = createBoard(cols, rows)
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
-      let color = 0
-      for (let attempt = 0; attempt < 24; attempt += 1) {
-        color = Math.min(colors - 1, Math.floor(rng.next() * colors))
-        const left1 = col >= 1 ? cellAt(board, row, col - 1).color : -1
-        const left2 = col >= 2 ? cellAt(board, row, col - 2).color : -1
-        const up1 = row >= 1 ? cellAt(board, row - 1, col).color : -1
-        const up2 = row >= 2 ? cellAt(board, row - 2, col).color : -1
-        if (color === left1 && color === left2) continue
-        if (color === up1 && color === up2) continue
+      const order: number[] = []
+      for (let color = 0; color < colors; color += 1) order.push(color)
+      for (let index = order.length - 1; index > 0; index -= 1) {
+        const swap = Math.floor(rng.next() * (index + 1))
+        ;[order[index], order[swap]] = [order[swap]!, order[index]!]
+      }
+      let chosen = -1
+      for (const color of order) {
+        if (wouldFormGroup(board, row, col, color)) continue
+        chosen = color
         break
       }
-      board.cells[indexOf(board, row, col)] = makeCell(color)
+      if (chosen < 0) chosen = pickColor(rng, colors)
+      board.cells[indexOf(board, row, col)] = makeCell(Math.min(colors - 1, chosen))
     }
   }
   return board

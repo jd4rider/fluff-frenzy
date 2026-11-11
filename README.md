@@ -12,7 +12,7 @@ A sliding match puzzle starring fluffy pom-pom creatures, built with Phaser 3, T
 
 You never swap two neighbours. You grab a **whole row or column** and slide it: every fluff in the line moves together, wrapping cleanly around the board edge so the one leaving the right reappears on the left. Release and the line snaps to the nearest cell.
 
-Three or more matching fluffs in a straight line burst into a cloud of colour. Everything above falls, new fluffs drop in, and any matches they form continue the chain. Chains are where the scoring and the noise live.
+Three or more matching fluffs connected in a group — a straight line, an L or a blob, never a diagonal — burst into a cloud of colour. Everything above falls, new fluffs drop in, and any matches they form continue the chain. Chains are where the scoring and the noise live.
 
 Filling the **Fluff Fever** meter buys twelve seconds of double points, a glowing board frame and heavier effects.
 

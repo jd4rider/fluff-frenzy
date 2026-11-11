@@ -30,7 +30,7 @@
   ],
   "howToPlay": [
     "Drag any fluff left or right to slide its whole row, or up and down to slide its column. The line wraps around the board as you move it.",
-    "Three or more matching fluffs in a line burst. Everything above falls and new fluffs drop in, so one slide can set off a long cascade.",
+    "Three or more matching fluffs connected in a group burst — a line, an L or a blob, never a diagonal. Everything above falls and new fluffs drop in, so one slide can set off a long cascade.",
     "On a keyboard, hover a cell and use the arrow keys or WASD to slide that row or column. R restarts and P pauses.",
     "Big matches and deep cascades charge the Fluff Fever meter; when it fills you get twelve seconds of double points.",
     "In Puzzle Journey the card tells you the goal and the move limit. Finish inside the star threshold to earn three stars.",

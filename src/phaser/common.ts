@@ -307,10 +307,22 @@ export function header(
   }
 }
 
-export function toast(scene: Phaser.Scene, message: string, accent: string, y = 120, duration = 1500): void {
+/**
+ * Toasts live in design space, so they must be parented to the scene's design
+ * stage. A scene-space toast is authored for 720x1280 and overflows a phone.
+ */
+export function toast(
+  scene: Phaser.Scene,
+  message: string,
+  accent: string,
+  y = 120,
+  duration = 1500,
+  parent?: Phaser.GameObjects.Container,
+): void {
   const width = Math.min(600, DESIGN_W - 40)
   const height = 52
   const container = scene.add.container(DESIGN_W / 2, y).setDepth(6000)
+  parent?.add(container)
   container.add(
     panel(scene, -width / 2, 0, width, height, {
       fill: '#122036',

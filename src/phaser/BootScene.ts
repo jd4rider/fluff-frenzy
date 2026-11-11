@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { save } from '../core/saves'
 import { sound } from '../core/audio'
-import { buildEffectTextures, buildFluffTextures } from './textures'
+import { FLUFFS, buildEffectTextures, buildFluffTextures } from './textures'
 import { worldOf } from '../data/worlds'
 import { Backdrop } from './Backdrop'
 import { display, label } from './common'
@@ -10,6 +10,20 @@ import { DESIGN_H, DESIGN_W } from './layout'
 export class BootScene extends Phaser.Scene {
   constructor() {
     super('Boot')
+  }
+
+  /**
+   * The fluffy cast is rendered in Blender (see art/blender/fluff.py) and
+   * shipped as transparent sprites. If a sprite is missing, buildFluffTextures
+   * paints the canvas fallback under the same key instead.
+   */
+  preload(): void {
+    FLUFFS.forEach((palette, index) => {
+      const slug = palette.name.toLowerCase()
+      for (const suffix of ['', '-blink', '-wow']) {
+        this.load.image(`fluff-${index}${suffix}`, `fluffs/${slug}${suffix}.png`)
+      }
+    })
   }
 
   create(): void {

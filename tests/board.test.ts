@@ -95,6 +95,28 @@ describe('matching', () => {
     expect(runs.map((run) => run.axis)).toEqual(['row', 'row'])
   })
 
+  it('pops a connected L of three that no straight line would catch', () => {
+    const board = boardFrom([
+      [0, 0, 5, 5],
+      [0, 4, 1, 2],
+      [3, 1, 4, 5],
+      [2, 5, 3, 4],
+    ])
+    const runs = findRuns(board)
+    expect(runs.length).toBe(1)
+    expect(runs[0]!.length).toBe(3)
+    expect([...runCellSet(runs)].sort((a, b) => a - b)).toEqual([0, 1, 4])
+  })
+
+  it('does not match diagonals', () => {
+    const board = boardFrom([
+      [0, 1, 2],
+      [3, 0, 4],
+      [5, 6, 0],
+    ])
+    expect(findRuns(board)).toEqual([])
+  })
+
   it('does not wrap matches across the board edge', () => {
     const board = boardFrom([[0, 1, 2, 3, 0, 1]])
     expect(findRuns(board)).toEqual([])
@@ -208,6 +230,12 @@ describe('cascades', () => {
   it('falls back to reshuffling when a board has no usable move', () => {
     const board = randomBoard(8, 8, 6, new Rand(3))
     expect(hasUsableMove(board, 6)).toBe(true)
+  })
+
+  it('opens every generated board with nothing already popping', () => {
+    for (let seed = 0; seed < 80; seed += 1) {
+      expect(findRuns(randomBoard(8, 8, 6, new Rand(seed)))).toEqual([])
+    }
   })
 })
 

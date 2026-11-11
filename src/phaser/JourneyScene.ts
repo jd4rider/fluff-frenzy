@@ -206,6 +206,9 @@ export class JourneyScene extends Phaser.Scene {
     const data = save()
     const earned = data.journey[String(levelId)] ?? 0
     const container = this.add.container(0, 0).setDepth(5000)
+    // Design-space parenting: the card is authored at 720x1280 and would
+    // otherwise be drawn at raw screen pixels and run off a phone's edge.
+    this.stage.root.add(container)
     const veil = this.add.rectangle(0, 0, DESIGN_W, DESIGN_H, 0x05070f, 0.72).setOrigin(0)
     veil.setInteractive()
     container.add(veil)

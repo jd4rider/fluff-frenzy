@@ -56,7 +56,7 @@ export function resolveBoard(board: Board, rng: Rand, options: ResolveOptions): 
     for (const index of cells) {
       if (working.cells[index]?.special === 'golden') gold += 1
     }
-    const stepScore = scoreStep(runs, chain, options.fever, gold)
+    const stepScore = scoreStep(runs, chain, options.fever, gold, cells.size)
     golden += gold
     cleared += cells.size
     score += stepScore

@@ -136,7 +136,7 @@ export class GameScene extends Phaser.Scene {
 
     sound.startMusic('play')
     if (this.mode === 'journey' && this.level) {
-      toast(this, this.level.objective.label, '#ffe066', 214, 2200)
+      toast(this, this.level.objective.label, '#ffe066', DESIGN_H - 250, 2200, this.stage.root)
     }
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.paintBoardMask, this)
@@ -478,7 +478,8 @@ export class GameScene extends Phaser.Scene {
     if (this.busy) return
     const result = this.session.move(axis, line, delta)
     if (!result.accepted) {
-      if (result.reason === 'anchored') toast(this, 'That line is anchored by an icy fluff', '#8fd7ff', 240, 1200)
+      if (result.reason === 'anchored')
+        toast(this, 'That line is anchored by an icy fluff', '#8fd7ff', 240, 1200, this.stage.root)
       this.renderBoard(this.session.board)
       return
     }
@@ -782,12 +783,12 @@ export class GameScene extends Phaser.Scene {
   private useHint(): void {
     if (this.busy || this.paused || this.session.status !== 'playing') return
     if (this.hintsLeft <= 0) {
-      toast(this, 'No hints left this run', '#ff9f9f', 240, 1200)
+      toast(this, 'No hints left this run', '#ff9f9f', 240, 1200, this.stage.root)
       return
     }
     const move = bestMove(this.session.clone())
     if (!move) {
-      toast(this, 'No slides left - shuffle coming', '#ffe066', 240, 1200)
+      toast(this, 'No slides left - shuffle coming', '#ffe066', 240, 1200, this.stage.root)
       return
     }
     this.hintsLeft -= 1

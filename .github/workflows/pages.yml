@@ -32,7 +32,7 @@ jobs:
       - name: Add the playable build at /play/
         run: |
           mkdir -p dist/play
-          cp -r dist/index.html dist/assets dist/favicon.svg dist/arcade-client.js dist/play/
+          cp -r dist/index.html dist/assets dist/favicon.svg dist/arcade-client.js dist/fluffs dist/play/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
