@@ -111,8 +111,17 @@ export class GameScene extends Phaser.Scene {
   private windPhase = 0
   /** Animated fur state per board cell: which Blender strip is playing. */
   private fluffState: { action: FluffAction; frame: number; color: number; flip: boolean }[] = []
+  /** One-shot Blender actions in flight per cell, so a new one replaces the old. */
+  private fluffOnce: ({ tween: Phaser.Tweens.Tween; action: FluffAction } | null)[] = []
   private animTick = 0
   private intro = false
+  /** No input for a while and the fluffs doze off until the player comes back. */
+  private lastInputAt = 0
+  private dozing = false
+  /** Once a run is won, late squash/surprise timers must not break the party. */
+  private celebrating = false
+  /** Results are only handed over once, however the run ended. */
+  private finishing = false
 
   constructor() {
     super('Game')
@@ -127,6 +136,11 @@ export class GameScene extends Phaser.Scene {
   init(): void {
     this.tiles = []
     this.fluffState = []
+    this.fluffOnce = []
+    this.dozing = false
+    this.celebrating = false
+    this.finishing = false
+    this.lastInputAt = 0
     this.drag = null
     this.busy = false
     this.paused = false
@@ -192,6 +206,7 @@ export class GameScene extends Phaser.Scene {
     })
     this.game.events.on(Phaser.Core.Events.BLUR, this.onBlur, this)
     this.playIntro()
+    this.lastInputAt = this.time.now
     fadeIn(this)
   }
 
@@ -326,6 +341,13 @@ export class GameScene extends Phaser.Scene {
     const tile = this.tiles[index]
     const state = this.fluffState[index]
     if (!tile || !state) return
+    // Any explicit action change cancels the one-shot that was in flight, so a
+    // squish finishing late can never paint over a doze or a surprise.
+    const once = this.fluffOnce[index]
+    if (once && action && action !== once.action) {
+      once.tween.stop()
+      this.fluffOnce[index] = null
+    }
     if (color !== undefined) state.color = color
     if (action) state.action = action
     if (flip !== undefined) state.flip = flip
@@ -342,7 +364,8 @@ export class GameScene extends Phaser.Scene {
     const state = this.fluffState[index]
     if (!state) return
     const color = state.color
-    this.tweens.addCounter({
+    this.fluffOnce[index]?.tween.stop()
+    const tween = this.tweens.addCounter({
       from: 0,
       to: FLUFF_FRAMES[action],
       duration,
@@ -350,24 +373,86 @@ export class GameScene extends Phaser.Scene {
         const frame = Math.min(FLUFF_FRAMES[action] - 1, Math.floor(tween.getValue() ?? 0))
         this.paintFluff(index, color, action, frame)
       },
-      onComplete: () => this.paintFluff(index, color, 'idle', 0),
+      onComplete: () => {
+        this.fluffOnce[index] = null
+        this.paintFluff(index, color, 'idle', 0)
+      },
     })
+    this.fluffOnce[index] = { tween, action }
   }
 
-  /** Landing squash for the whole board, rippling from the top down. */
-  private squashFluffs(): void {
+  /**
+   * Landing squash for the whole board, rippling from the top down. Fluffs that
+   * watched a neighbour pop land, then look over in surprise.
+   */
+  private squashFluffs(surprised: Set<number> = new Set()): void {
     for (let index = 0; index < this.tiles.length; index += 1) {
       if (!this.tiles[index]!.main.visible) continue
-      this.time.delayedCall(Math.floor(index / 8) * 18 + Math.random() * 40, () => this.playOnce(index, 'squish', 340))
+      this.time.delayedCall(Math.floor(index / 8) * 18 + Math.random() * 40, () => {
+        if (this.celebrating) return
+        this.playOnce(index, 'squish', 340)
+      })
+      if (!surprised.has(index)) continue
+      this.time.delayedCall(300 + Math.random() * 80, () => {
+        if (this.celebrating) return
+        if (this.tiles[index]?.main.visible) this.playOnce(index, 'wow', 420)
+      })
     }
   }
 
-  /** Victory: the survivors celebrate until the results screen takes over. */
+  /** Victory: the survivors bounce and shimmy until the results screen explains. */
   private celebrateFluffs(): void {
     for (let index = 0; index < this.tiles.length; index += 1) {
       if (!this.tiles[index]!.main.visible) continue
       const state = this.fluffState[index]!
-      this.paintFluff(index, state.color, 'happy', 0)
+      this.paintFluff(index, state.color, 'party', 0)
+    }
+  }
+
+  /** The cells directly around the final pop are the ones that react to it. */
+  private neighboursOf(cells: number[]): Set<number> {
+    const out = new Set<number>()
+    const cleared = new Set(cells)
+    for (const cellIndex of cells) {
+      const row = Math.floor(cellIndex / 8)
+      const col = cellIndex % 8
+      for (const [dr, dc] of [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1],
+      ] as const) {
+        const r = row + dr
+        const c = col + dc
+        if (r < 0 || r > 7 || c < 0 || c > 7) continue
+        const index = r * 8 + c
+        if (cleared.has(index)) continue
+        out.add(index)
+      }
+    }
+    return out
+  }
+
+  /** Idle for a long while: the board takes a nap, and wakes with a start. */
+  private checkDozing(): void {
+    if (this.intro || this.dozing || this.drag) return
+    if (this.time.now - this.lastInputAt < DOZE_AFTER_MS) return
+    this.dozing = true
+    for (let index = 0; index < this.tiles.length; index += 1) {
+      const state = this.fluffState[index]
+      if (!state || !this.tiles[index]!.main.visible) continue
+      this.paintFluff(index, state.color, 'sleepy', Math.floor(Math.random() * FLUFF_FRAMES.sleepy))
+    }
+  }
+
+  private wakeFluffs(): void {
+    this.lastInputAt = this.time.now
+    if (!this.dozing) return
+    this.dozing = false
+    for (let index = 0; index < this.tiles.length; index += 1) {
+      const state = this.fluffState[index]
+      if (!state || !this.tiles[index]!.main.visible) continue
+      this.playOnce(index, 'wow', 360)
     }
   }
 
@@ -434,13 +519,15 @@ export class GameScene extends Phaser.Scene {
       const tile = this.tiles[index]!
       const state = this.fluffState[index]
       if (!state || !tile.main.visible) continue
-      if (state.action !== 'idle' && state.action !== 'happy') continue
-      if (blinking && Math.random() < 0.06) {
+      if (state.action !== 'idle' && state.action !== 'happy' && state.action !== 'sleepy' && state.action !== 'party') continue
+      if (blinking && state.action === 'idle' && Math.random() < 0.06) {
         this.playOnce(index, 'blink', 200)
         continue
       }
+      // Celebration is the quickest loop, dozing the slowest.
+      const speed = state.action === 'party' ? 85 : state.action === 'sleepy' ? 170 : 110
       const frames = FLUFF_FRAMES[state.action]
-      const next = (Math.floor(this.elapsed / 110) + index * 5) % frames
+      const next = (Math.floor(this.elapsed / speed) + index * 5) % frames
       if (next !== state.frame) this.paintFluff(index, state.color, state.action, next)
     }
   }
@@ -479,6 +566,9 @@ export class GameScene extends Phaser.Scene {
         const y = this.layout.top + row * cell + cell / 2
         const filled = data.color >= 0
         if (filled) {
+          // A fresh board state ends whatever one-shot was still playing.
+          this.fluffOnce[index]?.tween.stop()
+          this.fluffOnce[index] = null
           this.fluffState[index] = { action: 'idle', frame: 0, color: data.color, flip: false }
           this.paintFluff(index)
         }
@@ -564,6 +654,7 @@ export class GameScene extends Phaser.Scene {
 
   private beginDrag(pointer: Phaser.Input.Pointer): void {
     if (this.busy || this.paused || this.session.status !== 'playing') return
+    this.wakeFluffs()
     this.updateCursor(pointer)
     const local = this.localPointer(pointer)
     this.drag = {
@@ -591,6 +682,8 @@ export class GameScene extends Phaser.Scene {
     }
     const raw = this.drag.axis === 'row' ? dx : dy
     this.drag.delta = raw / this.layout.cell
+    // Any real gesture wakes a dozing board and re-arms the nap timer.
+    this.lastInputAt = this.time.now
     // Smoothed swipe speed; it sets how hard the fur blows back.
     const swipe = this.drag.axis === 'row' ? pointer.velocity.x : pointer.velocity.y
     this.dragSpeed = Phaser.Math.Linear(this.dragSpeed, swipe, 0.45)
@@ -716,6 +809,7 @@ export class GameScene extends Phaser.Scene {
 
   private keyboardSlide(axis: Axis, direction: 1 | -1): void {
     if (this.busy || this.paused || this.session.status !== 'playing') return
+    this.wakeFluffs()
     const line = axis === 'row' ? this.cursor.row : this.cursor.col
     this.commitMove(axis, line, direction)
   }
@@ -747,12 +841,11 @@ export class GameScene extends Phaser.Scene {
     // so the first pop animates the fluffs the player can actually see.
     const first = result.steps[0]
     this.renderBoard(first ? first.before : this.session.board)
-
     this.playSteps(result.steps, 0, () => {
       this.renderBoard(this.session.board)
       this.busy = false
       this.stepProgress = []
-      this.squashFluffs()
+      this.squashFluffs(this.neighboursOf(result.steps[result.steps.length - 1]?.cleared ?? []))
       this.updateHud()
       if (this.session.feverMs > 0 && !this.feverBanner) this.enterFever()
       if (this.session.status !== 'playing') this.finish()
@@ -1117,16 +1210,20 @@ export class GameScene extends Phaser.Scene {
       this.stage.root.add(container)
     } else {
       sound.startMusic(this.session.feverActive ? 'fever' : 'play')
+      this.lastInputAt = this.time.now
       this.pausePanel?.destroy(true)
       this.pausePanel = null
     }
   }
 
   private finish(): void {
-    if (this.busy) return
+    if (this.busy || this.finishing) return
+    this.finishing = true
     this.busy = true
     const won = this.session.status === 'won'
     if (won) {
+      // No queued squash may paint over the celebration while it plays.
+      this.celebrating = true
       sound.win()
       this.celebrate()
       this.celebrateFluffs()
@@ -1178,16 +1275,23 @@ export class GameScene extends Phaser.Scene {
   override update(_time: number, delta: number): void {
     this.backdrop.update(delta)
     this.animateFluffs(delta)
+    // A win can land in the middle of a cascade. Wait until the board has
+    // finished moving, then hand over to Results - never hang on the last frame.
+    if (this.session.status !== 'playing' && !this.busy) this.finish()
     if (this.paused || this.busy) return
     if (this.session.status === 'playing') {
       this.elapsed += delta
       this.session.update(delta)
       this.updateHud()
       this.updateFever(delta)
+      this.checkDozing()
       if (this.session.status !== 'playing') this.finish()
     }
   }
 }
+
+/** How long the board waits for a move before the fluffs nod off. */
+const DOZE_AFTER_MS = 15_000
 
 function dailySeedNumber(): number {
   const now = new Date()

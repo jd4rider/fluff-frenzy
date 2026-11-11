@@ -5,6 +5,7 @@ import { WORLDS, worldOf } from '../data/worlds'
 import { arcade } from '../integration/LittleJoyAdapter'
 import { Backdrop } from './Backdrop'
 import { button, display, fadeIn, fadeTo, formatNumber, hex, iconButton, label, panel } from './common'
+import { FLUFF_FRAMES, fluffAnimKey } from './fluffAnim'
 import { DESIGN_H, DESIGN_W, designStage } from './layout'
 import { FLUFFS } from './textures'
 
@@ -16,7 +17,8 @@ export class MenuScene extends Phaser.Scene {
   private stage!: ReturnType<typeof designStage>
   private backdrop!: Backdrop
   private fluffs: Phaser.GameObjects.Image[] = []
-  private eyes: Phaser.GameObjects.Image[] = []
+  /** The Blender strips each hero fluff is playing, when the artwork exists. */
+  private heroAnim: { idle: string | null; blink: string | null }[] = []
   private tick = 0
 
   constructor() {
@@ -57,16 +59,21 @@ export class MenuScene extends Phaser.Scene {
       }),
     )
 
-    // Three fluffs bounce in place and glance toward the pointer.
+    // Three fluffs bounce, glance toward the pointer and play the real Blender
+    // idle loops, each on its own phase, so they never blink in unison.
     const slots = [
       { x: 156, y: 372, color: 0 },
       { x: 360, y: 340, color: 2 },
       { x: 566, y: 378, color: 4 },
     ]
     slots.forEach((slot, index) => {
-      const fluff = this.add.image(slot.x, slot.y, `fluff-${slot.color}`).setScale(0.86)
+      const idle = fluffAnimKey(this, slot.color, 'idle')
+      const fluff = idle
+        ? this.add.sprite(slot.x, slot.y, idle, (index * 4) % FLUFF_FRAMES.idle).setScale(0.86)
+        : this.add.image(slot.x, slot.y, `fluff-${slot.color}`).setScale(0.86)
       root.add(fluff)
       this.fluffs.push(fluff)
+      this.heroAnim.push({ idle, blink: fluffAnimKey(this, slot.color, 'blink') })
       this.tweens.add({
         targets: fluff,
         y: slot.y - 12,
@@ -82,17 +89,6 @@ export class MenuScene extends Phaser.Scene {
         yoyo: true,
         repeat: -1,
         ease: 'Sine.InOut',
-      })
-      const blink = this.add.image(slot.x, slot.y, `fluff-${slot.color}-blink`).setScale(0.86).setAlpha(0)
-      root.add(blink)
-      this.eyes.push(blink)
-      this.time.addEvent({
-        delay: 2600 + index * 900,
-        loop: true,
-        callback: () => {
-          this.tweens.add({ targets: fluff, alpha: 0, duration: 60, yoyo: true, hold: 90 })
-          blink.setAlpha(0)
-        },
       })
     })
   }
@@ -216,8 +212,17 @@ export class MenuScene extends Phaser.Scene {
       const dx = Phaser.Math.Clamp((px - fluff.x) / 60, -1, 1)
       fluff.setFlipX(dx < -0.35)
       fluff.x += (fluff.x + dx * 2 - fluff.x) * 0.001
-      void index
       void py
+      // Real rendered fur frames: idle breathing with a blink every few seconds.
+      const hero = this.heroAnim[index]
+      if (!hero?.idle) return
+      const blinkPhase = ((this.tick + index * 2700) % 7400) / 1000
+      if (hero.blink && blinkPhase < 0.22) {
+        const frame = Math.min(FLUFF_FRAMES.blink - 1, Math.floor((blinkPhase / 0.22) * FLUFF_FRAMES.blink))
+        fluff.setTexture(hero.blink, frame)
+        return
+      }
+      fluff.setTexture(hero.idle, (Math.floor(this.tick / 110) + index * 4) % FLUFF_FRAMES.idle)
     })
   }
 

@@ -48,7 +48,9 @@ ACTIONS = {
     "squish": 8,
     "happy": 8,
     "blink": 4,
-    "wow": 4,
+    "wow": 8,
+    "sleepy": 12,
+    "party": 12,
 }
 
 SIZE = 384
@@ -440,14 +442,60 @@ def set_pose(parts: dict, action: str, frame: int, frames: int) -> None:
             eye.scale = (0.19, 0.115, 0.205 * close)
         wind = 0.05
     elif action == "wow":
+        # Startle: a flinch, a pop upward, then a settle with the eyes wide.
+        if frame <= 1:
+            squish = frame / 1.0
+            body.scale = (1.0 + 0.12 * squish, 0.96 + 0.08 * squish, 1.02 - 0.18 * squish)
+            body.location = (0.0, 0.0, -0.05 * squish)
+        elif frame <= 4:
+            pop = (frame - 2) / 2.0
+            body.scale = (1.0 - 0.04 * pop, 0.96 - 0.03 * pop, 1.02 + 0.11 * pop)
+            body.location = (0.0, 0.0, 0.055 * pop)
+        else:
+            settle = 1.0 - (frame - 5) / max(1.0, frames - 5)
+            body.scale = (1.0 + 0.02 * settle, 0.96, 1.02 + 0.03 * settle)
+            body.location = (0.0, 0.0, 0.03 * settle)
+        # The lids snap open and stay open for the rest of the reaction.
+        open_amount = 1.0 if frame >= 2 else frame / 2.0
         for eye in (left_eye, right_eye):
-            eye.scale = (0.235, 0.135, 0.255)
+            eye.scale = (0.19 + 0.045 * open_amount, 0.115 + 0.02 * open_amount, 0.205 + 0.05 * open_amount)
         mouth.scale = (0.062, 0.05, 0.07)
-        # A quick startle hop, fur puffing out.
-        hop = math.sin(phase) * 0.05
-        body.location = (0.0, 0.0, hop + 0.02)
-        wind = 0.16 + 0.1 * math.cos(phase)
+        wind = 0.16 + 0.08 * math.cos(phase)
         gust = phase * 2.0
+    elif action == "sleepy":
+        # Dozing: heavy lids, slow breathing, a lazy sway and two soft yawns.
+        breath = math.sin(phase * 0.5)
+        body.scale = (1.0 + 0.022 * breath, 0.96 + 0.018 * breath, 1.02 + 0.03 * breath)
+        body.rotation_euler = (0.0, math.sin(phase * 0.5) * 0.07, 0.0)
+        body.location = (0.0, 0.0, -0.02 + breath * 0.008)
+        for eye in (left_eye, right_eye):
+            eye.scale = (0.19, 0.115, 0.06)
+        yawn = max(0.0, math.sin(phase * 2.0 - 0.9)) ** 3
+        mouth.scale = (0.07, 0.05, 0.038 + 0.05 * yawn)
+        mouth.location = (0.0, -0.93, MOUTH_Z - 0.012 * yawn)
+        # Barely any wind: only the slow swell of a sleeping coat.
+        wind = 0.035 + 0.015 * breath
+        gust = phase * 0.6
+    elif action == "party":
+        # Celebration: bouncing, shimmying, grinning, coat thrown about.
+        beat = abs(math.sin(phase))
+        body.location = (0.0, 0.0, beat * 0.085 + 0.015)
+        body.scale = (
+            1.0 + 0.055 * math.sin(phase * 2.0),
+            0.96 - 0.02 * beat,
+            1.02 + 0.07 * math.sin(phase * 2.0),
+        )
+        body.rotation_euler = (
+            0.0,
+            math.sin(phase * 2.0) * math.radians(5.0),
+            math.sin(phase) * math.radians(9.0),
+        )
+        for eye in (left_eye, right_eye):
+            eye.scale = (0.215, 0.115, 0.10)
+        mouth.scale = (0.115, 0.05, 0.09)
+        mouth.location = (0.0, -0.93, MOUTH_Z + 0.004 * beat)
+        wind = 0.2 + 0.16 * math.sin(phase * 2.4)
+        gust = phase * 2.8
     elif action == "wind":
         # The creature is being dragged to the right; its coat streams left.
         ramp = frame / max(1, frames - 1)
@@ -525,7 +573,7 @@ def main() -> None:
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
     parser = argparse.ArgumentParser()
     parser.add_argument("--color", default="ruby")
-    parser.add_argument("--action", default="idle")
+    parser.add_argument("--action", default="idle", help="an action, 'all', or a comma separated list")
     parser.add_argument("--frames", type=int, default=0)
     parser.add_argument("--size", type=int, default=SIZE)
     parser.add_argument("--out", default="art/render")
@@ -533,7 +581,7 @@ def main() -> None:
     args = parser.parse_args(argv)
 
     colors = list(COLORS) if args.color == "all" else [args.color]
-    actions = list(ACTIONS) if args.action == "all" else [args.action]
+    actions = list(ACTIONS) if args.action == "all" else [name.strip() for name in args.action.split(",") if name.strip()]
 
     for color_key in colors:
         parts = build(color_key, args.size)

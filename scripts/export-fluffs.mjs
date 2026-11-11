@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /**
@@ -11,7 +11,9 @@ import { dirname, join } from 'node:path'
  *   public/fluffs/<slug>-squish.png   8 frames
  *   public/fluffs/<slug>-happy.png    8 frames
  *   public/fluffs/<slug>-blink.png    4 frames  (4x1)
- *   public/fluffs/<slug>-wow.png      4 frames
+ *   public/fluffs/<slug>-wow.png      8 frames  (4x2)
+ *   public/fluffs/<slug>-sleepy.png  12 frames  (4x3)
+ *   public/fluffs/<slug>-party.png   12 frames  (4x3)
  *   public/fluffs/<slug>.png          idle frame 0, for menu thumbnails
  *
  * Re-run after `blender ... --color all --action all`. Missing renders are
@@ -20,7 +22,7 @@ import { dirname, join } from 'node:path'
  */
 
 const COLORS = ['ruby', 'sunshine', 'ocean', 'emerald', 'amethyst', 'tangerine']
-const ACTIONS = ['idle', 'wind', 'squish', 'happy', 'blink', 'wow']
+const ACTIONS = ['idle', 'wind', 'squish', 'happy', 'blink', 'wow', 'sleepy', 'party']
 const COLUMNS = 4
 const FRAME = 128
 
@@ -48,9 +50,13 @@ for (const color of COLORS) {
   for (const action of ACTIONS) {
     const dir = join(renderDir, color, action)
     if (!existsSync(dir)) continue
-    const frames = readdirSync(dir)
-      .filter((name) => name.endsWith('.png'))
-      .sort()
+    // Skip this script's own staging links from an earlier run, or the sheet
+    // ends up padded with duplicates of the previous pass.
+    const entries = readdirSync(dir)
+    for (const name of entries) {
+      if (name.startsWith('.sheet_')) unlinkSync(join(dir, name))
+    }
+    const frames = entries.filter((name) => name.endsWith('.png') && !name.startsWith('.sheet_')).sort()
     if (frames.length === 0) continue
     const rows = Math.ceil(frames.length / COLUMNS)
     // The grid must be exact, so repeat the last frame into any empty cells.
@@ -85,20 +91,15 @@ for (const color of COLORS) {
     }
   }
 
-  // Single frames for menus, the collection and level cards.
-  const stillsFor = [
-    { action: 'idle', frame: 'idle_00.png', suffix: '' },
-    { action: 'blink', frame: 'blink_02.png', suffix: '-blink' },
-    { action: 'wow', frame: 'wow_00.png', suffix: '-wow' },
-  ]
-  for (const still of stillsFor) {
-    const input = join(renderDir, color, still.action, still.frame)
-    if (!existsSync(input)) continue
+  // A single idle frame for the collection, level cards and the canvas
+  // fallback. It must not share a name with any animation strip.
+  const input = join(renderDir, color, 'idle', 'idle_00.png')
+  if (existsSync(input)) {
     try {
-      scale(input, join(outDir, `${color}${still.suffix}.png`))
+      scale(input, join(outDir, `${color}.png`))
       stills += 1
     } catch {
-      console.warn(`skipped still ${color}${still.suffix}`)
+      console.warn(`skipped still ${color}`)
     }
   }
 }

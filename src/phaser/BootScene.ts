@@ -22,9 +22,8 @@ export class BootScene extends Phaser.Scene {
   preload(): void {
     FLUFFS.forEach((palette, index) => {
       const slug = palette.name.toLowerCase()
-      for (const suffix of ['', '-blink', '-wow']) {
-        this.load.image(`fluff-${index}${suffix}`, `fluffs/${slug}${suffix}.png`)
-      }
+      // One still per colour for menus and as the fallback if a strip is missing.
+      this.load.image(`fluff-${index}`, `fluffs/${slug}.png`)
       for (const action of FLUFF_ACTIONS) {
         this.load.spritesheet(`fluff-${index}-anim-${action}`, `fluffs/${slug}-${action}.png`, {
           frameWidth: FLUFF_FRAME_SIZE,

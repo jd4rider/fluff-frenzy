@@ -8,9 +8,17 @@ import Phaser from 'phaser'
  *
  * Frame counts must match ACTIONS in the Blender script.
  */
-export type FluffAction = 'idle' | 'wind' | 'squish' | 'happy' | 'blink' | 'wow'
+export type FluffAction =
+  | 'idle'
+  | 'wind'
+  | 'squish'
+  | 'happy'
+  | 'blink'
+  | 'wow'
+  | 'sleepy'
+  | 'party'
 
-export const FLUFF_ACTIONS: FluffAction[] = ['idle', 'wind', 'squish', 'happy', 'blink', 'wow']
+export const FLUFF_ACTIONS: FluffAction[] = ['idle', 'wind', 'squish', 'happy', 'blink', 'wow', 'sleepy', 'party']
 
 export const FLUFF_FRAMES: Record<FluffAction, number> = {
   idle: 12,
@@ -18,7 +26,9 @@ export const FLUFF_FRAMES: Record<FluffAction, number> = {
   squish: 8,
   happy: 8,
   blink: 4,
-  wow: 4,
+  wow: 8,
+  sleepy: 12,
+  party: 12,
 }
 
 /** One cell of every strip; the board's scale maths assumes this size. */
@@ -34,9 +44,11 @@ export function fluffAnimKey(scene: Phaser.Scene, color: number, action: FluffAc
   return scene.textures.exists(key) ? key : null
 }
 
-/** Single-frame fallback the menus use, and the board uses if strips are missing. */
+/**
+ * Single-frame fallback: the idle still. It is deliberately one image per
+ * colour, so it can never collide with an animation sheet's file name.
+ */
 export function fluffStillKey(color: number, action: FluffAction): string {
-  if (action === 'blink') return `fluff-${color}-blink`
-  if (action === 'wow') return `fluff-${color}-wow`
+  void action
   return `fluff-${color}`
 }

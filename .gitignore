@@ -3,3 +3,6 @@ dist/
 .DS_Store
 *.local
 *.log
+
+# Blender export staging links
+.sheet_*.png
