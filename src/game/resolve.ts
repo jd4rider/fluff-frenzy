@@ -1,5 +1,6 @@
 import {
   clearCells,
+  cloneBoard,
   expandSpecials,
   findRuns,
   runCellSet,
@@ -46,6 +47,7 @@ export function resolveBoard(board: Board, rng: Rand, options: ResolveOptions): 
   for (let chain = 1; chain <= maxChain; chain += 1) {
     const runs = findRuns(working)
     if (runs.length === 0) break
+    const before = cloneBoard(working)
     const base = runCellSet(runs)
     const thawed = thawNeighbours(working, base)
     const cells = expandSpecials(working, base)
@@ -59,6 +61,8 @@ export function resolveBoard(board: Board, rng: Rand, options: ResolveOptions): 
     cleared += cells.size
     score += stepScore
     bestRun = Math.max(bestRun, ...runs.map((run) => run.length))
+    clearCells(working, cells)
+    settleBoard(working, rng, options.colors, options.refill)
     steps.push({
       chain,
       runs,
@@ -66,9 +70,9 @@ export function resolveBoard(board: Board, rng: Rand, options: ResolveOptions): 
       colors,
       score: stepScore,
       thawed,
+      before,
+      after: cloneBoard(working),
     })
-    clearCells(working, cells)
-    settleBoard(working, rng, options.colors, options.refill)
   }
 
   return { board: working, steps, cleared, score, bestRun, chain: steps.length, golden }

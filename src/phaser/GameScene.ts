@@ -5,7 +5,7 @@ import journey from '../data/journey.json'
 import { WORLDS } from '../data/worlds'
 import { bestMove } from '../game/solver'
 import { Session } from '../game/session'
-import type { Axis, LevelData, ModeId, Special } from '../game/types'
+import type { Axis, Board, ClearStep, LevelData, ModeId, Special } from '../game/types'
 import { Backdrop } from './Backdrop'
 import {
   DESIGN_H,
@@ -131,7 +131,7 @@ export class GameScene extends Phaser.Scene {
 
     this.buildHud()
     this.buildBoard()
-    this.renderBoard(false)
+    this.renderBoard(this.session.board)
     this.bindInput()
 
     sound.startMusic('play')
@@ -287,9 +287,10 @@ export class GameScene extends Phaser.Scene {
     )
   }
 
-  private renderBoard(animate: boolean): void {
+  /** Draws a board instantly. Motion is owned by the step animator below. */
+  private renderBoard(board: Board): void {
     const { cell } = this.layout
-    const board = this.session.board
+    const baseScale = (cell * 0.94) / 128
     for (let row = 0; row < 8; row += 1) {
       for (let col = 0; col < 8; col += 1) {
         const index = row * 8 + col
@@ -297,36 +298,17 @@ export class GameScene extends Phaser.Scene {
         const data = board.cells[index]!
         const x = this.layout.left + col * cell + cell / 2
         const y = this.layout.top + row * cell + cell / 2
-        tile.main.setPosition(x, y).setVisible(data.color >= 0)
-        tile.ghost.setPosition(x, y).setVisible(false).setAlpha(0)
-        tile.main.setTexture(`fluff-${Math.max(0, data.color)}`)
-        tile.main.setScale((cell * 0.94) / 128)
-        tile.ghost.setScale((cell * 0.94) / 128)
+        const filled = data.color >= 0
+        if (filled) tile.main.setTexture(`fluff-${data.color}`)
+        tile.main
+          .setPosition(x, y)
+          .setScale(baseScale)
+          .setAngle(0)
+          .setAlpha(filled ? 1 : 0)
+          .setVisible(filled)
+        tile.ghost.setPosition(x, y).setScale(baseScale).setVisible(false).setAlpha(0)
         this.applyBadge(tile.badge, data.special, cell, x, y)
         tile.ghostBadge.setVisible(false).setAlpha(0)
-        if (animate) {
-          tile.main.y = y - cell * 1.6
-          tile.main.setAlpha(0)
-          this.tweens.add({
-            targets: tile.main,
-            y,
-            alpha: 1,
-            duration: this.reducedMotion ? 90 : 220,
-            delay: Math.min(220, row * 16),
-            ease: 'Quad.Out',
-          })
-        } else {
-          tile.main.setAlpha(1)
-        }
-        if (animate && !this.reducedMotion) {
-          this.tweens.add({
-            targets: tile.main,
-            scaleY: { from: (cell * 0.94) / 128, to: (cell * 0.86) / 128 },
-            yoyo: true,
-            duration: 90,
-            delay: 150 + row * 16,
-          })
-        }
       }
     }
   }
@@ -477,7 +459,7 @@ export class GameScene extends Phaser.Scene {
         angle: 0,
         duration: 120,
       })
-      this.renderBoard(false)
+      this.renderBoard(this.session.board)
       return
     }
     this.positionDragLine(drag.axis, drag.line, snapped)
@@ -491,52 +473,156 @@ export class GameScene extends Phaser.Scene {
     this.commitMove(axis, line, direction)
   }
 
-  /** Commits a move, then plays the burst and refill animations. */
+  /** Commits a move, then animates every cascade step in order. */
   private commitMove(axis: Axis, line: number, delta: number): void {
     if (this.busy) return
     const result = this.session.move(axis, line, delta)
     if (!result.accepted) {
       if (result.reason === 'anchored') toast(this, 'That line is anchored by an icy fluff', '#8fd7ff', 240, 1200)
-      this.renderBoard(false)
+      this.renderBoard(this.session.board)
       return
     }
     this.busy = true
     this.clearHint()
     this.updateHud()
 
-    const clearedCells: number[] = result.steps.flatMap((step) => step.cleared)
-    const unique = [...new Set(clearedCells)]
-    if (unique.length > 0) {
-      unique.forEach((index, order) => {
-        const row = Math.floor(index / 8)
-        const col = index % 8
-        const cell = this.session.board.cells[index]
-        const color = cell?.color ?? 0
-        this.time.delayedCall(Math.min(180, order * 6), () => {
-          this.burst(
-            this.layout.left + col * this.layout.cell + this.layout.cell / 2,
-            this.layout.top + row * this.layout.cell + this.layout.cell / 2,
-            color,
-          )
-        })
-      })
-      sound.pop(result.chain)
-      this.cameras.main.shake(this.reducedMotion ? 0 : 90, 0.004)
-    }
-
-    const label = chainWord(result.chain, result.bestRun)
-    if (label) this.showChain(label, result.chain)
-
     const scoreBefore = this.session.score - result.score
     if (result.score > 0) this.bumpScore(scoreBefore, this.session.score)
+    const chain = chainWord(result.chain, result.bestRun)
+    if (chain) this.showChain(chain, result.chain)
+    if (result.chain >= 3 && !this.reducedMotion) this.cameras.main.shake(110, 0.0035)
 
-    this.time.delayedCall(this.reducedMotion ? 140 : 260, () => {
-      this.renderBoard(true)
+    // Re-sync the tile views to the board exactly as it stood after the slide,
+    // so the first pop animates the fluffs the player can actually see.
+    const first = result.steps[0]
+    this.renderBoard(first ? first.before : this.session.board)
+
+    this.playSteps(result.steps, 0, () => {
+      this.renderBoard(this.session.board)
       this.busy = false
       this.updateHud()
       if (this.session.feverMs > 0 && !this.feverBanner) this.enterFever()
       if (this.session.status !== 'playing') this.finish()
     })
+  }
+
+  /** Pops one match, then lets the survivors fall and the refill drop in. */
+  private playSteps(steps: ClearStep[], index: number, done: () => void): void {
+    if (index >= steps.length) {
+      done()
+      return
+    }
+    const step = steps[index]!
+    const cleared = [...new Set(step.cleared)]
+    const { cell } = this.layout
+    const pop = this.reducedMotion ? 60 : 160
+    let popped = 0
+    for (const cellIndex of cleared) {
+      const tile = this.tiles[cellIndex]
+      if (!tile) continue
+      const x = this.layout.left + (cellIndex % 8) * cell + cell / 2
+      const y = this.layout.top + Math.floor(cellIndex / 8) * cell + cell / 2
+      this.burst(x, y, step.before.cells[cellIndex]?.color ?? 0)
+      if (!tile.main.visible) continue
+      popped += 1
+      this.tweens.add({
+        targets: tile.main,
+        scaleX: 0.12,
+        scaleY: 0.12,
+        alpha: 0,
+        angle: Phaser.Math.Between(-35, 35),
+        duration: pop,
+        ease: 'Back.In',
+        onComplete: () => tile.main.setVisible(false),
+      })
+      this.tweens.add({ targets: tile.badge, alpha: 0, duration: pop })
+    }
+    if (popped > 0) sound.pop(step.chain)
+    if (step.score > 0) this.floatScore(step.score, step.chain)
+
+    this.time.delayedCall(pop + 30, () => this.settleStep(step, () => this.playSteps(steps, index + 1, done)))
+  }
+
+  /**
+   * Gravity, animated per column: surviving fluffs tween down into the gaps and
+   * the refilled fluffs drop in from above the board frame.
+   */
+  private settleStep(step: ClearStep, done: () => void): void {
+    const { cell, top, left } = this.layout
+    const cleared = new Set(step.cleared)
+    const free = [...cleared].map((cellIndex) => this.tiles[cellIndex]).filter((tile): tile is Tile => Boolean(tile))
+    const next: Tile[] = new Array<Tile>(64)
+    const falls: { tile: Tile; x: number; y: number }[] = []
+
+    for (let col = 0; col < 8; col += 1) {
+      const survivors: { row: number; tile: Tile }[] = []
+      for (let row = 7; row >= 0; row -= 1) {
+        const cellIndex = row * 8 + col
+        if (cleared.has(cellIndex)) continue
+        const data = step.before.cells[cellIndex]
+        if (!data || data.color < 0) continue
+        survivors.push({ row, tile: this.tiles[cellIndex]! })
+      }
+      survivors.forEach((survivor, order) => {
+        const targetRow = 7 - order
+        next[targetRow * 8 + col] = survivor.tile
+        if (targetRow === survivor.row) return
+        falls.push({ tile: survivor.tile, x: left + col * cell + cell / 2, y: top + targetRow * cell + cell / 2 })
+      })
+
+      // Refill enters from above the frame, one cell per empty slot.
+      const newCount = 8 - survivors.length
+      for (let row = 0; row < newCount; row += 1) {
+        const cellIndex = row * 8 + col
+        const data = step.after.cells[cellIndex]
+        if (!data || data.color < 0) continue
+        const tile = free.pop() ?? this.tiles[cellIndex]!
+        next[cellIndex] = tile
+        const x = left + col * cell + cell / 2
+        const startY = top + (row - newCount) * cell + cell / 2
+        tile.main
+          .setTexture(`fluff-${data.color}`)
+          .setPosition(x, startY)
+          .setScale((cell * 0.94) / 128)
+          .setAngle(0)
+          .setAlpha(1)
+          .setVisible(true)
+        tile.badge.setVisible(false).setAlpha(0)
+        falls.push({ tile, x, y: top + row * cell + cell / 2 })
+      }
+    }
+
+    const duration = this.reducedMotion ? 110 : 270
+    falls.forEach((fall, order) => {
+      fall.tile.ghost.setVisible(false)
+      fall.tile.ghostBadge.setVisible(false)
+      this.tweens.add({
+        targets: fall.tile.main,
+        x: fall.x,
+        y: fall.y,
+        duration,
+        delay: Math.min(90, order * 6),
+        ease: 'Quad.In',
+      })
+      if (fall.tile.badge.visible) {
+        this.tweens.add({ targets: fall.tile.badge, x: fall.x, y: fall.y, duration, delay: Math.min(90, order * 6), ease: 'Quad.In' })
+      }
+    })
+
+    this.time.delayedCall(duration + 110, () => {
+      this.tiles = next.map((tile, cellIndex) => tile ?? this.tiles[cellIndex]!)
+      this.renderBoard(step.after)
+      done()
+    })
+  }
+
+  private floatScore(score: number, chain: number): void {
+    const text = label(this, DESIGN_W / 2, this.layout.top + 70, `+${formatNumber(score)}`, 26, chain >= 3 ? '#ff8bf0' : '#ffe066', {
+      origin: 0.5,
+      fontStyle: 'bold',
+    })
+    this.stage.root.add(text)
+    this.tweens.add({ targets: text, y: text.y - 66, alpha: 0, duration: 760, ease: 'Quad.Out', onComplete: () => text.destroy() })
   }
 
   private burst(x: number, y: number, color: number): void {

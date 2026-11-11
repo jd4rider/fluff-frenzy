@@ -174,6 +174,37 @@ describe('cascades', () => {
     expect(colours(build()).length).toBe(6)
   })
 
+  it('records the board either side of every clear so gravity can be animated', () => {
+    const board = boardFrom([
+      [0, 0, 0, 1, 2, 3],
+      [3, 4, 1, 2, 3, 4],
+      [1, 2, 4, 4, 4, 1],
+      [2, 3, 5, 5, 1, 2],
+      [4, 5, 1, 2, 3, 4],
+      [5, 1, 2, 3, 4, 5],
+    ])
+    const outcome = resolveBoard(board, new Rand(9), { colors: 6, refill: true, fever: false })
+    expect(outcome.steps.length).toBeGreaterThan(0)
+    for (const step of outcome.steps) {
+      expect(step.before.cells).toHaveLength(36)
+      expect(step.after.cells).toHaveLength(36)
+      for (const index of step.cleared) expect(step.after.cells[index]!.color).toBeGreaterThanOrEqual(0)
+      // Gravity keeps each column's order and packs survivors against the floor.
+      for (let col = 0; col < 6; col += 1) {
+        const survivors: number[] = []
+        for (let row = 0; row < 6; row += 1) {
+          const index = row * 6 + col
+          if (step.cleared.includes(index)) continue
+          const color = step.before.cells[index]!.color
+          if (color >= 0) survivors.push(color)
+        }
+        const after: number[] = []
+        for (let row = 0; row < 6; row += 1) after.push(step.after.cells[row * 6 + col]!.color)
+        expect(after.slice(6 - survivors.length)).toEqual(survivors)
+      }
+    }
+  })
+
   it('falls back to reshuffling when a board has no usable move', () => {
     const board = randomBoard(8, 8, 6, new Rand(3))
     expect(hasUsableMove(board, 6)).toBe(true)

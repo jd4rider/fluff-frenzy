@@ -35,6 +35,13 @@ export interface ClearStep {
   score: number
   /** Cells thawed/unlocked by this step's matches. */
   thawed: number[]
+  /**
+   * The board as the player saw it when this match was found, and the board
+   * after gravity and refill. The renderer animates the difference so fluffs
+   * visibly fall into the gaps instead of the whole board popping back in.
+   */
+  before: Board
+  after: Board
 }
 
 export interface MoveResult {
