@@ -320,6 +320,32 @@ export function buildEffectTextures(scene: Phaser.Scene): void {
       texture.refresh()
     }
   }
+  if (!scene.textures.exists('fluff-wisp')) {
+    // A soft tuft of fur: faded ends, thicker middle, so a fast drag reads as
+    // strands being combed backwards by the wind rather than spark particles.
+    const width = 76
+    const height = 24
+    const texture = scene.textures.createCanvas('fluff-wisp', width, height)
+    if (texture) {
+      const ctx = texture.getContext()
+      ctx.clearRect(0, 0, width, height)
+      const gradient = ctx.createLinearGradient(0, 0, width, 0)
+      gradient.addColorStop(0, 'rgba(255,255,255,0)')
+      gradient.addColorStop(0.42, 'rgba(255,255,255,0.9)')
+      gradient.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.strokeStyle = gradient
+      ctx.lineCap = 'round'
+      for (const [offset, weight] of [[0.28, 5], [0.5, 7], [0.72, 4]] as const) {
+        ctx.lineWidth = weight
+        ctx.beginPath()
+        ctx.moveTo(2, height * offset)
+        ctx.quadraticCurveTo(width * 0.45, height * offset - weight * 0.9, width * 0.62, height * offset)
+        ctx.quadraticCurveTo(width * 0.8, height * offset + weight * 0.7, width - 2, height * offset)
+        ctx.stroke()
+      }
+      texture.refresh()
+    }
+  }
   if (!scene.textures.exists('flare')) {
     const texture = scene.textures.createCanvas('flare', 128, 128)
     if (texture) {

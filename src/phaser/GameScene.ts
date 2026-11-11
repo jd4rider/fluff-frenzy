@@ -103,6 +103,11 @@ export class GameScene extends Phaser.Scene {
   /** Objective totals per cascade step, so frees are seen to count as they land. */
   private stepProgress: number[] = []
   private stepProgressIndex = 0
+  /** Wind: fur strands behind a sliding line, plus the swipe speed driving them. */
+  private wispLayer!: Phaser.GameObjects.Container
+  private dragSpeed = 0
+  private windGate = 0
+  private windPhase = 0
 
   constructor() {
     super('Game')
@@ -246,6 +251,11 @@ export class GameScene extends Phaser.Scene {
 
     this.tileLayer = this.add.container(0, 0)
     this.boardLayer.add(this.tileLayer)
+
+    // Wind streaks live behind the fluffs so fur appears to stream out from
+    // under them. Inherits the board mask, so nothing spills past the frame.
+    this.wispLayer = this.add.container(0, 0)
+    this.tileLayer.add(this.wispLayer)
 
     // The checkerboard sits under the fluffs, never over them.
     const shade = this.add.graphics()
@@ -412,6 +422,9 @@ export class GameScene extends Phaser.Scene {
     }
     const raw = this.drag.axis === 'row' ? dx : dy
     this.drag.delta = raw / this.layout.cell
+    // Smoothed swipe speed; it sets how hard the fur blows back.
+    const swipe = this.drag.axis === 'row' ? pointer.velocity.x : pointer.velocity.y
+    this.dragSpeed = Phaser.Math.Linear(this.dragSpeed, swipe, 0.45)
     this.positionDragLine(this.drag.axis, this.drag.line, this.drag.delta)
   }
 
@@ -420,6 +433,12 @@ export class GameScene extends Phaser.Scene {
     const { cell, left, top, size } = this.layout
     const offsetX = axis === 'row' ? delta * cell : 0
     const offsetY = axis === 'col' ? delta * cell : 0
+    // The swipe speed pulls the fur back: bodies stretch along the travel axis
+    // and strands peel off the trailing edge, like hair on a roller coaster.
+    const baseScale = (cell * 0.94) / 128
+    const speed = this.reducedMotion ? 0 : Phaser.Math.Clamp(Math.abs(this.dragSpeed) / 1100, 0, 1)
+    const stretch = baseScale * (1 + 0.14 * speed)
+    const squash = baseScale * (1 - 0.085 * speed)
     for (let slot = 0; slot < 8; slot += 1) {
       const row = axis === 'row' ? line : slot
       const col = axis === 'row' ? slot : line
@@ -433,7 +452,9 @@ export class GameScene extends Phaser.Scene {
       if (spanX) x = left + ((((x - left) % spanX) + spanX) % spanX)
       if (spanY) y = top + ((((y - top) % spanY) + spanY) % spanY)
       tile.main.setPosition(x, y)
-      tile.main.setAngle(Phaser.Math.Clamp(delta * (axis === 'row' ? 6 : 0), -10, 10))
+      if (axis === 'row') tile.main.setScale(stretch, squash)
+      else tile.main.setScale(squash, stretch)
+      tile.main.setAngle(Phaser.Math.Clamp(delta * (axis === 'row' ? 6 : 0), -10, 10) + Math.sign(delta) * 3 * speed)
       // A second copy one board-width away fills the gap at the wrapping edge.
       // Anything outside the mask is clipped, so this costs nothing visually.
       tile.ghost.setTexture(tile.main.texture.key).setScale(tile.main.scaleX, tile.main.scaleY)
@@ -447,13 +468,63 @@ export class GameScene extends Phaser.Scene {
       tile.badge.setPosition(x, y)
       tile.badge.setAngle(tile.main.angle)
     }
+    this.blowFur(axis, line, delta, speed)
+  }
+
+  /**
+   * Emits a few fur wisps from the trailing edge of the sliding line. Sized by
+   * graphics quality and gated by time, so a fast drag costs a handful of
+   * pooled sprites instead of a particle storm.
+   */
+  private blowFur(axis: Axis, line: number, delta: number, speed: number): void {
+    if (this.reducedMotion || this.quality === 'low' || speed <= 0.05) return
+    if (this.time.now < this.windGate) return
+    this.windGate = this.time.now + 26
+    const { cell } = this.layout
+    const dir = delta >= 0 ? 1 : -1
+    const budget = this.quality === 'medium' ? 3 : 5
+    const stride = Math.ceil(8 / budget)
+    const phase = (this.windPhase = (this.windPhase + 1) % stride)
+    const angle = axis === 'row' ? (dir > 0 ? 180 : 0) : dir > 0 ? 270 : 90
+    for (let slot = phase; slot < 8; slot += stride) {
+      const row = axis === 'row' ? line : slot
+      const col = axis === 'row' ? slot : line
+      const tile = this.tiles[row * 8 + col]!
+      if (!tile.main.visible) continue
+      const color = Number(/fluff-(\d)/.exec(tile.main.texture.key)?.[1] ?? 0)
+      const tint = hex((FLUFFS[color] ?? FLUFFS[0]!).light)
+      const jitter = (Math.random() - 0.5) * cell * 0.42
+      const x = tile.main.x + (axis === 'row' ? -dir * cell * 0.3 : jitter)
+      const y = tile.main.y + (axis === 'col' ? -dir * cell * 0.3 : jitter)
+      const wisp = this.add
+        .image(x, y, 'fluff-wisp')
+        .setTint(tint)
+        .setAngle(angle + (Math.random() - 0.5) * 16)
+        .setScale(0.34 + Math.random() * 0.16, 0.5 + Math.random() * 0.25)
+        .setAlpha(0.25 + speed * 0.45)
+      this.wispLayer.add(wisp)
+      const tail = (16 + 30 * speed) * (0.7 + Math.random() * 0.6)
+      this.tweens.add({
+        targets: wisp,
+        x: x - (axis === 'row' ? dir : 0) * tail,
+        y: y - (axis === 'col' ? dir : 0) * tail,
+        scaleX: wisp.scaleX * 1.4,
+        alpha: 0,
+        duration: 240 + Math.random() * 180,
+        ease: 'Sine.Out',
+        onComplete: () => wisp.destroy(),
+      })
+    }
   }
 
   private endDrag(): void {
     if (!this.drag || this.busy) return
     const drag = this.drag
     this.drag = null
-    if (!drag.locked) return
+    if (!drag.locked) {
+      this.dragSpeed = 0
+      return
+    }
     const snapped = Math.round(drag.delta)
     const shift = ((snapped % 8) + 8) % 8
     if (shift === 0) {
@@ -462,10 +533,13 @@ export class GameScene extends Phaser.Scene {
         angle: 0,
         duration: 120,
       })
+      this.dragSpeed = 0
       this.renderBoard(this.session.board)
       return
     }
+    // Keep the streak through the snap frame, then let the fur settle.
     this.positionDragLine(drag.axis, drag.line, snapped)
+    this.dragSpeed = 0
     sound.snap()
     this.commitMove(drag.axis, drag.line, shift)
   }
