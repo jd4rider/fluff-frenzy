@@ -16,6 +16,8 @@ import { DESIGN_W, designStage } from './layout'
 import { WORLDS } from '../data/worlds'
 
 /** Settings: audio, graphics quality, motion, input and account. */
+const STYLE_UNLOCKS = [0, 40, 120]
+
 export class SettingsScene extends Phaser.Scene {
   constructor() {
     super('Settings')
@@ -85,17 +87,13 @@ export class SettingsScene extends Phaser.Scene {
         save.settings.reducedMotion = !save.settings.reducedMotion
       })
     }, 'Shortens shakes, flashes and drops')
-    row('TAP TO SLIDE', data.settings.tapToDrop ? 'ON' : 'OFF', () => {
-      update((save) => {
-        save.settings.tapToDrop = !save.settings.tapToDrop
-      })
-    }, 'Tap a line to nudge it one cell instead of dragging')
-
     const stars = totalStars(data)
     const style = data.settings.furStyle
     row('FUR STYLE', ['CLASSIC', 'SPARKLE', 'CROWNED'][style] ?? 'CLASSIC', () => {
       update((save) => {
-        save.settings.furStyle = (save.settings.furStyle + 1) % 3
+        const next = (save.settings.furStyle + 1) % 3
+        // Only styles the player has actually unlocked can be worn.
+        save.settings.furStyle = stars >= STYLE_UNLOCKS[next]! ? next : 0
       })
     }, `Unlocked by stars: 0 / 40 / 120 \u00b7 you have ${stars}`)
 
