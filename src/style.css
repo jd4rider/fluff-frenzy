@@ -1,0 +1,39 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 8%, #26305e 0%, #0b1024 58%, #05060f 100%);
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+}
+
+#game canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * The arcade client pins its account bubble to a screen corner, which is where
+ * the fever meter lives. While a run is active any injected arcade chrome is
+ * hidden so it cannot cover the board or swallow a drag.
+ */
+body.ff-playing > div {
+  display: none !important;
+}

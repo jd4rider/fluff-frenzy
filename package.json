@@ -1,0 +1,27 @@
+{
+  "name": "fluff-frenzy",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Fluff Frenzy \u2014 a sliding match puzzle adventure for Little Joy Arcade.",
+  "author": "jd4rider",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "levels": "tsx scripts/generate-levels.ts"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
