@@ -1,4 +1,5 @@
 import Phaser from 'phaser'
+import { openTipJar } from './support'
 import { sound } from '../core/audio'
 import { recordLevel, recordRun, save, syncAchievements, totalStars } from '../core/saves'
 import journey from '../data/journey.json'
@@ -237,6 +238,13 @@ export class ResultsScene extends Phaser.Scene {
       button(this, 44 + (DESIGN_W - 88 - 14) / 2 + 14, y + 172, (DESIGN_W - 88 - 14) / 2, 58, 'MENU', () => fadeTo(this, 'Menu'), {
         fill: '#243056',
         size: 15,
+      }),
+    )
+    // Quiet support link: results screen only, under the action rows.
+    root.add(
+      button(this, 44, 1024, DESIGN_W - 88, 40, '☕  BUY ME A COFFEE', () => openTipJar(), {
+        fill: '#1d2647',
+        size: 12,
       }),
     )
   }
