@@ -144,6 +144,44 @@ export class Session {
       fever: this.feverActive,
     })
 
+    const baseline = this.objective ? this.objectiveValue(this.objective) : 0
+    const goalColor = this.objective?.kind === 'color' ? (this.objective.color ?? 0) : -1
+    const progressByStep: number[] = []
+    let runCleared = 0
+    let runColor = 0
+    let runScore = 0
+    let runChain = 0
+    let runBest = 0
+
+    for (const step of outcome.steps) {
+      // Cascades are credited exactly like the first pop: every freed fluff is
+      // counted against its own colour on the board the step actually cleared.
+      for (const index of step.cleared) {
+        const cell = step.before.cells[index]
+        if (!cell || cell.color < 0) continue
+        this.clearedByColor[cell.color] = (this.clearedByColor[cell.color] ?? 0) + 1
+        if (cell.color === goalColor) runColor += 1
+      }
+      runCleared += step.cleared.length
+      runScore += step.score
+      runChain = Math.max(runChain, step.chain)
+      for (const run of step.runs) runBest = Math.max(runBest, run.length)
+      if (this.objective) {
+        const kind = this.objective.kind
+        const value =
+          kind === 'clear'
+            ? baseline + runCleared
+            : kind === 'color'
+              ? baseline + runColor
+              : kind === 'score'
+                ? baseline + runScore
+                : kind === 'cascade'
+                  ? Math.max(baseline, runChain)
+                  : Math.max(baseline, runBest)
+        progressByStep.push(value)
+      }
+    }
+
     this.board = outcome.board
     this.score += outcome.score
     this.clearedTotal += outcome.cleared
@@ -151,13 +189,6 @@ export class Session {
     this.bestRun = Math.max(this.bestRun, outcome.bestRun)
     this.movesUsed += 1
     this.moves.push([axis, line, delta])
-
-    for (const step of outcome.steps) {
-      for (const index of step.cleared) {
-        const cell = slid.cells[index]
-        if (cell && cell.color >= 0) this.clearedByColor[cell.color] = (this.clearedByColor[cell.color] ?? 0) + 1
-      }
-    }
 
     if (this.movesLeft !== Infinity) {
       this.movesLeft += moveBonus(
@@ -193,6 +224,7 @@ export class Session {
       chain: outcome.chain,
       board: this.board,
       created: [],
+      progressByStep,
     }
   }
 

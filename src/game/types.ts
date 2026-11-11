@@ -56,6 +56,11 @@ export interface MoveResult {
   board: Board
   /** Special cells created by this move. */
   created: { index: number; special: Special }[]
+  /**
+   * Objective total after each cascade step. The first pop and every cascade
+   * that follows are credited, so the HUD can count them up as they land.
+   */
+  progressByStep?: number[]
 }
 
 export type ObjectiveKind = 'clear' | 'color' | 'score' | 'cascade' | 'big'

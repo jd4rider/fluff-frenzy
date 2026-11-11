@@ -285,3 +285,66 @@ describe('session rules', () => {
     expect(colours(session.board)).toEqual(colours(clone.board))
   })
 })
+
+const cascadeLevel: LevelData = {
+  id: 1,
+  world: 0,
+  seed: 99,
+  colors: 6,
+  objective: { kind: 'clear', target: 9999, label: 'Free 9999 fluffs' },
+  moveLimit: 99,
+  stars: [9, 9],
+  solution: [],
+  solutionMoves: 0,
+  specials: [],
+  scoreTarget: 0,
+}
+
+/** Level goals are counted per freed fluff, so cascades must pay in full. */
+describe('cascade credit', () => {
+  it('credits every cascade step to the objective, not just the first pop', () => {
+    const session = new Session({ mode: 'journey', level: cascadeLevel, seed: 0 })
+    let checked = 0
+    for (let line = 0; line < session.rows && checked < 3; line += 1) {
+      for (const axis of ['row', 'col'] as const) {
+        for (let delta = 1; delta < 8 && checked < 3; delta += 1) {
+          const clone = session.clone()
+          const trial = clone.move(axis, line, delta)
+          if (!trial.accepted || trial.steps.length < 2) continue
+          const before = session.progress().current
+          const result = session.move(axis, line, delta)
+          const steps = result.progressByStep ?? []
+          expect(steps).toHaveLength(result.steps.length)
+          expect(steps[steps.length - 1]).toBe(before + result.cleared)
+          for (let index = 1; index < steps.length; index += 1) {
+            expect(steps[index]!).toBeGreaterThan(steps[index - 1]!)
+          }
+          checked += 1
+        }
+      }
+    }
+    expect(checked).toBe(3)
+  })
+
+  it('tallies every freed fluff against its own colour, cascades included', () => {
+    const session = new Session({ mode: 'journey', level: cascadeLevel, seed: 0 })
+    let moves = 0
+    for (let line = 0; line < session.rows && moves < 4; line += 1) {
+      for (const axis of ['row', 'col'] as const) {
+        for (let delta = 1; delta < 8; delta += 1) {
+          const clone = session.clone()
+          if (clone.move(axis, line, delta).cleared === 0) continue
+          if (!session.move(axis, line, delta).accepted) continue
+          // A cascade frees fluffs the pre-gravity board never showed here, so
+          // every cell must be attributed from the board its step cleared.
+          expect(session.clearedByColor.reduce((sum, n) => sum + n, 0)).toBe(session.clearedTotal)
+          moves += 1
+          break
+        }
+        if (moves >= 4) break
+      }
+    }
+    expect(moves).toBeGreaterThanOrEqual(2)
+    expect(session.clearedTotal).toBeGreaterThan(0)
+  })
+})

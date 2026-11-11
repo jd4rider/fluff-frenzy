@@ -100,6 +100,9 @@ export class GameScene extends Phaser.Scene {
   private feverBanner: Phaser.GameObjects.Container | null = null
   private quality: 'low' | 'medium' | 'high' = 'high'
   private reducedMotion = false
+  /** Objective totals per cascade step, so frees are seen to count as they land. */
+  private stepProgress: number[] = []
+  private stepProgressIndex = 0
 
   constructor() {
     super('Game')
@@ -480,9 +483,12 @@ export class GameScene extends Phaser.Scene {
     if (!result.accepted) {
       if (result.reason === 'anchored')
         toast(this, 'That line is anchored by an icy fluff', '#8fd7ff', 240, 1200, this.stage.root)
+      this.stepProgress = []
       this.renderBoard(this.session.board)
       return
     }
+    this.stepProgress = result.progressByStep ?? []
+    this.stepProgressIndex = 0
     this.busy = true
     this.clearHint()
     this.updateHud()
@@ -501,6 +507,7 @@ export class GameScene extends Phaser.Scene {
     this.playSteps(result.steps, 0, () => {
       this.renderBoard(this.session.board)
       this.busy = false
+      this.stepProgress = []
       this.updateHud()
       if (this.session.feverMs > 0 && !this.feverBanner) this.enterFever()
       if (this.session.status !== 'playing') this.finish()
@@ -514,6 +521,9 @@ export class GameScene extends Phaser.Scene {
       return
     }
     const step = steps[index]!
+    // Credit this cascade step in the objective chip as soon as it pops.
+    this.stepProgressIndex = index
+    this.updateHud()
     const cleared = [...new Set(step.cleared)]
     const { cell } = this.layout
     const pop = this.reducedMotion ? 60 : 160
@@ -743,12 +753,17 @@ export class GameScene extends Phaser.Scene {
 
     const progress = this.session.progress()
     if (this.level) {
-      this.objectiveText.setText(`${progress.label.toUpperCase()}  ${Math.min(progress.current, progress.target)}/${progress.target}`)
+      const shown = this.stepProgress.length
+        ? this.stepProgress[Math.min(this.stepProgressIndex, this.stepProgress.length - 1)]!
+        : progress.current
+      this.objectiveText.setText(
+        `${progress.label.toUpperCase()}  ${Math.min(shown, progress.target)}/${progress.target}`,
+      )
       this.objectiveBar.clear()
-      const ratio = Math.min(1, progress.target > 0 ? progress.current / progress.target : 0)
+      const ratio = Math.min(1, progress.target > 0 ? shown / progress.target : 0)
       this.objectiveBar.fillStyle(0xffffff, 0.12)
       this.objectiveBar.fillRoundedRect(20, 46, DESIGN_W - 108, 12, 6)
-      this.objectiveBar.fillStyle(hex(progress.complete ? '#6fe3a0' : '#ffe066'), 1)
+      this.objectiveBar.fillStyle(hex(shown >= progress.target ? '#6fe3a0' : '#ffe066'), 1)
       this.objectiveBar.fillRoundedRect(20, 46, Math.max(6, (DESIGN_W - 108) * ratio), 12, 6)
     } else {
       const cleared = `${this.session.clearedTotal} fluffs freed`

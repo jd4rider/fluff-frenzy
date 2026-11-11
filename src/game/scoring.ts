@@ -11,13 +11,14 @@ export function chainMultiplier(chain: number): number {
 }
 
 /**
- * Extra moves granted by a clear. Only genuinely big plays refund a move, and
- * never more than one per move, so a strong player can sustain a Classic run
- * without the bank growing without bound.
+ * Extra moves granted by a clear. Only exceptional plays refund a move — a
+ * 3x3-sized group or a six-deep cascade — and never more than one per move.
+ * The bar has to stay high or every move pays for itself under the flood rule
+ * and the move limit stops meaning anything.
  */
 export function moveBonus(runs: Run[], chain: number): number {
-  const bigRun = runs.some((run) => run.length >= 5)
-  if (bigRun || chain >= 5) return 1
+  const bigRun = runs.some((run) => run.length >= 8)
+  if (bigRun || chain >= 6) return 1
   return 0
 }
 
