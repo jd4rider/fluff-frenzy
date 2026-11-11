@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { save } from '../core/saves'
 import { sound } from '../core/audio'
+import { FLUFF_ACTIONS, FLUFF_FRAMES, FLUFF_FRAME_SIZE } from './fluffAnim'
 import { FLUFFS, buildEffectTextures, buildFluffTextures } from './textures'
 import { worldOf } from '../data/worlds'
 import { Backdrop } from './Backdrop'
@@ -13,15 +14,23 @@ export class BootScene extends Phaser.Scene {
   }
 
   /**
-   * The fluffy cast is rendered in Blender (see art/blender/fluff.py) and
-   * shipped as transparent sprites. If a sprite is missing, buildFluffTextures
-   * paints the canvas fallback under the same key instead.
+   * The fluffy cast is rendered and animated in Blender (art/blender/fluff.py)
+   * and shipped as transparent spritesheets: each action is a 4-column grid of
+   * 128px frames. The single frames stay loaded for menus and as the fallback
+   * if an animation sheet is missing.
    */
   preload(): void {
     FLUFFS.forEach((palette, index) => {
       const slug = palette.name.toLowerCase()
       for (const suffix of ['', '-blink', '-wow']) {
         this.load.image(`fluff-${index}${suffix}`, `fluffs/${slug}${suffix}.png`)
+      }
+      for (const action of FLUFF_ACTIONS) {
+        this.load.spritesheet(`fluff-${index}-anim-${action}`, `fluffs/${slug}-${action}.png`, {
+          frameWidth: FLUFF_FRAME_SIZE,
+          frameHeight: FLUFF_FRAME_SIZE,
+          endFrame: FLUFF_FRAMES[action] - 1,
+        })
       }
     })
   }

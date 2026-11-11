@@ -5,7 +5,7 @@
   "description": "A sliding match puzzle starring fluffy pom-pom creatures. Instead of swapping two neighbours, you grab a whole row or column and slide it, wrapping cleanly around the board so fluffs leaving one edge reappear on the other. Three or more matching fluffs burst into clouds of colour, the survivors fall, and fresh fluffs cascade in, which is where the big chains live. Five modes (Classic Arcade with a move bank, two-minute Timed Frenzy, lossless Zen Garden, a seeded Daily Challenge and a 500-level Puzzle Journey across ten themed worlds) run on the same deterministic board engine, so a recorded solution replays exactly. Charge the Fluff Fever meter for double points, use rainbow, bomb, lightning, golden, frozen and locked fluffs in the later worlds, and earn up to three stars per Journey level for solving it in fewer moves.",
   "categories": ["Puzzle", "Casual", "Arcade"],
   "runtime": "Phaser 3",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "updated": "2026-11-10",
   "status": "live",
   "featured": true,
@@ -18,7 +18,7 @@
   "highlights": [
     "Whole-row and whole-column sliding with seamless wraparound: no adjacent-swap limits, just draggable fluff lines",
     "Six hand-painted procedural fluff characters with fur strands, glossy highlights, blinking and three expressions",
-    "Fur blows back in the wind: sliding a line stretches each fluff and peels strands off its trailing edge",
+    "Fully animated 3D fur: every fluff is a Blender render whose strands bend in the wind, squash on landing and bounce when they celebrate",
     "Cascade chains with escalating banners, colour-matched bursts, expanding rings and a real Fluff Fever double-score mode",
     "Six special fluffs: rainbow wildcards, 3x3 bombs, lightning rows, golden bonus fluffs, frozen ice and locked anchors",
     "Five modes: Classic Arcade move bank, two-minute Timed Frenzy, endless Zen Garden, seeded Daily Challenge and the Journey",

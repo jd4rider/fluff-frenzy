@@ -27,6 +27,7 @@ import {
   panel,
   toast,
 } from './common'
+import { FLUFF_FRAMES, fluffAnimKey, fluffStillKey, type FluffAction } from './fluffAnim'
 import { FLUFFS } from './textures'
 
 interface JourneyFile {
@@ -108,13 +109,45 @@ export class GameScene extends Phaser.Scene {
   private dragSpeed = 0
   private windGate = 0
   private windPhase = 0
+  /** Animated fur state per board cell: which Blender strip is playing. */
+  private fluffState: { action: FluffAction; frame: number; color: number; flip: boolean }[] = []
+  private animTick = 0
+  private intro = false
 
   constructor() {
     super('Game')
   }
 
+  /**
+   * Phaser reuses one scene instance for every start, so each run has to begin
+   * from a clean slate. Without this the next level renders into the previous
+   * level's destroyed tiles, throws inside renderBoard and never leaves the
+   * CREATING state - which is exactly the black screen after NEXT LEVEL.
+   */
+  init(): void {
+    this.tiles = []
+    this.fluffState = []
+    this.drag = null
+    this.busy = false
+    this.paused = false
+    this.pausePanel = null
+    this.feverBanner = null
+    this.objectiveIcon = undefined
+    this.stepProgress = []
+    this.stepProgressIndex = 0
+    this.dragSpeed = 0
+    this.windGate = 0
+    this.windPhase = 0
+    this.animTick = 0
+    this.intro = false
+    this.elapsed = 0
+    this.blinkTimer = 0
+    this.hintsLeft = 3
+  }
+
   create(data: BoardPayload): void {
-    fadeIn(this)
+    // The fade-in runs once the board has assembled (playIntro), so a new level
+    // is never a black screen with a half-built scene behind it.
     this.stage = designStage(this)
     this.mode = data.mode ?? 'classic'
     this.level = this.mode === 'journey' ? LEVELS[(data.levelId ?? 1) - 1] : undefined
@@ -158,6 +191,8 @@ export class GameScene extends Phaser.Scene {
       document.body.classList.remove('ff-playing')
     })
     this.game.events.on(Phaser.Core.Events.BLUR, this.onBlur, this)
+    this.playIntro()
+    fadeIn(this)
   }
 
   private onBlur(): void {
@@ -269,6 +304,8 @@ export class GameScene extends Phaser.Scene {
       void row
     }
 
+    this.tiles = []
+    this.fluffState = []
     for (let index = 0; index < 64; index += 1) {
       const main = this.add.image(0, 0, 'fluff-0')
       const ghost = this.add.image(0, 0, 'fluff-0').setAlpha(0)
@@ -276,6 +313,135 @@ export class GameScene extends Phaser.Scene {
       const ghostBadge = this.add.image(0, 0, 'special-rainbow').setAlpha(0)
       this.tileLayer.add([main, ghost, ghostBadge, badge])
       this.tiles.push({ main, ghost, badge, ghostBadge })
+      this.fluffState.push({ action: 'idle', frame: 0, color: 0, flip: false })
+    }
+  }
+
+  /**
+   * Puts one cell onto a Blender animation strip: the fur is genuinely animated
+   * geometry, so wind, squash and celebration are frames, not sprite tricks.
+   * Falls back to the single-frame art if a sheet is missing.
+   */
+  private paintFluff(index: number, color?: number, action?: FluffAction, frame?: number, flip?: boolean): void {
+    const tile = this.tiles[index]
+    const state = this.fluffState[index]
+    if (!tile || !state) return
+    if (color !== undefined) state.color = color
+    if (action) state.action = action
+    if (flip !== undefined) state.flip = flip
+    if (frame !== undefined) state.frame = frame
+    const frames = FLUFF_FRAMES[state.action]
+    state.frame = ((state.frame % frames) + frames) % frames
+    const key = fluffAnimKey(this, state.color, state.action)
+    if (key) tile.main.setTexture(key, state.frame).setFlipX(state.flip)
+    else tile.main.setTexture(fluffStillKey(state.color, state.action)).setFlipX(false)
+  }
+
+  /** Plays a short action once, then returns that cell to its idle loop. */
+  private playOnce(index: number, action: FluffAction, duration: number): void {
+    const state = this.fluffState[index]
+    if (!state) return
+    const color = state.color
+    this.tweens.addCounter({
+      from: 0,
+      to: FLUFF_FRAMES[action],
+      duration,
+      onUpdate: (tween) => {
+        const frame = Math.min(FLUFF_FRAMES[action] - 1, Math.floor(tween.getValue() ?? 0))
+        this.paintFluff(index, color, action, frame)
+      },
+      onComplete: () => this.paintFluff(index, color, 'idle', 0),
+    })
+  }
+
+  /** Landing squash for the whole board, rippling from the top down. */
+  private squashFluffs(): void {
+    for (let index = 0; index < this.tiles.length; index += 1) {
+      if (!this.tiles[index]!.main.visible) continue
+      this.time.delayedCall(Math.floor(index / 8) * 18 + Math.random() * 40, () => this.playOnce(index, 'squish', 340))
+    }
+  }
+
+  /** Victory: the survivors celebrate until the results screen takes over. */
+  private celebrateFluffs(): void {
+    for (let index = 0; index < this.tiles.length; index += 1) {
+      if (!this.tiles[index]!.main.visible) continue
+      const state = this.fluffState[index]!
+      this.paintFluff(index, state.color, 'happy', 0)
+    }
+  }
+
+  /**
+   * The level assembles itself: the HUD is already up while the fluffs drop
+   * into the board in a staggered cascade, and the camera fades in over them.
+   */
+  private playIntro(): void {
+    const { cell, left, top } = this.layout
+    this.intro = true
+    this.busy = true
+    this.clearHint()
+    // The HUD is readable from the first frame while the board assembles.
+    this.updateHud()
+    const base = (cell * 0.94) / 128
+    for (let index = 0; index < this.tiles.length; index += 1) {
+      const tile = this.tiles[index]!
+      if (!tile.main.visible) continue
+      const row = Math.floor(index / 8)
+      const col = index % 8
+      const homeX = left + col * cell + cell / 2
+      const homeY = top + row * cell + cell / 2
+      // Each fluff pops up into its cell, rippling out from the top left. A
+      // small hop avoids the double-exposure a full fall across the board gave.
+      tile.main
+        .setPosition(homeX, homeY + cell * 0.42)
+        .setScale(base * 0.45)
+        .setAngle(Phaser.Math.Between(-14, 14))
+        .setAlpha(0)
+      tile.badge.setAlpha(0)
+      this.tweens.add({
+        targets: tile.main,
+        y: homeY,
+        alpha: 1,
+        scaleX: base,
+        scaleY: base,
+        angle: 0,
+        delay: row * 38 + col * 15,
+        duration: 380,
+        ease: 'Back.Out',
+        onUpdate: () => tile.badge.setPosition(tile.main.x, tile.main.y),
+        onComplete: () => {
+          this.applyBadge(tile.badge, this.session.board.cells[index]!.special, cell, homeX, homeY)
+        },
+      })
+    }
+    this.time.delayedCall(440 + 8 * 38, () => {
+      this.intro = false
+      this.busy = false
+      this.updateHud()
+    })
+  }
+
+  /** Idle breathing and blinks come straight from the rendered strips. */
+  private animateFluffs(delta: number): void {
+    if (this.paused || this.intro) return
+    this.animTick += delta
+    this.blinkTimer += delta
+    if (this.animTick < 80) return
+    this.animTick = 0
+    const blinking = this.blinkTimer > 300
+    if (blinking) this.blinkTimer = 0
+    for (let index = 0; index < this.tiles.length; index += 1) {
+      const tile = this.tiles[index]!
+      const state = this.fluffState[index]
+      if (!state || !tile.main.visible) continue
+      if (state.action !== 'idle' && state.action !== 'happy') continue
+      if (blinking && Math.random() < 0.06) {
+        this.playOnce(index, 'blink', 200)
+        continue
+      }
+      const frames = FLUFF_FRAMES[state.action]
+      const next = (Math.floor(this.elapsed / 110) + index * 5) % frames
+      if (next !== state.frame) this.paintFluff(index, state.color, state.action, next)
     }
   }
 
@@ -312,7 +478,10 @@ export class GameScene extends Phaser.Scene {
         const x = this.layout.left + col * cell + cell / 2
         const y = this.layout.top + row * cell + cell / 2
         const filled = data.color >= 0
-        if (filled) tile.main.setTexture(`fluff-${data.color}`)
+        if (filled) {
+          this.fluffState[index] = { action: 'idle', frame: 0, color: data.color, flip: false }
+          this.paintFluff(index)
+        }
         tile.main
           .setPosition(x, y)
           .setScale(baseScale)
@@ -433,12 +602,9 @@ export class GameScene extends Phaser.Scene {
     const { cell, left, top, size } = this.layout
     const offsetX = axis === 'row' ? delta * cell : 0
     const offsetY = axis === 'col' ? delta * cell : 0
-    // The swipe speed pulls the fur back: bodies stretch along the travel axis
-    // and strands peel off the trailing edge, like hair on a roller coaster.
-    const baseScale = (cell * 0.94) / 128
+    // The swipe drives the rendered wind frames: the fur is bent backwards in
+    // Blender, so the coat streams while the body leans into the drag.
     const speed = this.reducedMotion ? 0 : Phaser.Math.Clamp(Math.abs(this.dragSpeed) / 1100, 0, 1)
-    const stretch = baseScale * (1 + 0.14 * speed)
-    const squash = baseScale * (1 - 0.085 * speed)
     for (let slot = 0; slot < 8; slot += 1) {
       const row = axis === 'row' ? line : slot
       const col = axis === 'row' ? slot : line
@@ -452,12 +618,16 @@ export class GameScene extends Phaser.Scene {
       if (spanX) x = left + ((((x - left) % spanX) + spanX) % spanX)
       if (spanY) y = top + ((((y - top) % spanY) + spanY) % spanY)
       tile.main.setPosition(x, y)
-      if (axis === 'row') tile.main.setScale(stretch, squash)
-      else tile.main.setScale(squash, stretch)
+      const cellIndex = row * 8 + col
+      const windFrame = Math.min(FLUFF_FRAMES.wind - 1, Math.floor(Math.abs(delta) * 1.5))
+      this.paintFluff(cellIndex, undefined, 'wind', Math.max(windFrame, Math.round(speed * 2)), delta < 0)
       tile.main.setAngle(Phaser.Math.Clamp(delta * (axis === 'row' ? 6 : 0), -10, 10) + Math.sign(delta) * 3 * speed)
       // A second copy one board-width away fills the gap at the wrapping edge.
       // Anything outside the mask is clipped, so this costs nothing visually.
-      tile.ghost.setTexture(tile.main.texture.key).setScale(tile.main.scaleX, tile.main.scaleY)
+      tile.ghost
+        .setTexture(tile.main.texture.key, tile.main.frame.name)
+        .setFlipX(tile.main.flipX)
+        .setScale(tile.main.scaleX, tile.main.scaleY)
       tile.ghost.setAngle(tile.main.angle)
       if (spanX) {
         tile.ghost.setPosition(x < left + size / 2 ? x + spanX : x - spanX, y)
@@ -582,6 +752,7 @@ export class GameScene extends Phaser.Scene {
       this.renderBoard(this.session.board)
       this.busy = false
       this.stepProgress = []
+      this.squashFluffs()
       this.updateHud()
       if (this.session.feverMs > 0 && !this.feverBanner) this.enterFever()
       if (this.session.status !== 'playing') this.finish()
@@ -665,9 +836,12 @@ export class GameScene extends Phaser.Scene {
         next[cellIndex] = tile
         const x = left + col * cell + cell / 2
         const startY = top + (row - newCount) * cell + cell / 2
-        tile.main
-          .setTexture(`fluff-${data.color}`)
-          .setPosition(x, startY)
+        // Paint this exact tile: the board order is only committed after the
+        // drop finishes, so the array index is not this fluff's home yet.
+        const sheet = fluffAnimKey(this, data.color, 'idle')
+        if (sheet) tile.main.setTexture(sheet, 0).setFlipX(false)
+        else tile.main.setTexture(fluffStillKey(data.color, 'idle')).setFlipX(false)
+        tile.main.setPosition(x, startY)
           .setScale((cell * 0.94) / 128)
           .setAngle(0)
           .setAlpha(1)
@@ -955,6 +1129,7 @@ export class GameScene extends Phaser.Scene {
     if (won) {
       sound.win()
       this.celebrate()
+      this.celebrateFluffs()
     } else {
       sound.lose()
     }
@@ -1002,6 +1177,7 @@ export class GameScene extends Phaser.Scene {
 
   override update(_time: number, delta: number): void {
     this.backdrop.update(delta)
+    this.animateFluffs(delta)
     if (this.paused || this.busy) return
     if (this.session.status === 'playing') {
       this.elapsed += delta
@@ -1009,21 +1185,6 @@ export class GameScene extends Phaser.Scene {
       this.updateHud()
       this.updateFever(delta)
       if (this.session.status !== 'playing') this.finish()
-    }
-    this.blinkTimer += delta
-    if (this.blinkTimer > 240) {
-      this.blinkTimer = 0
-      for (let count = 0; count < 2; count += 1) {
-        const index = Math.floor(Math.random() * 64)
-        const tile = this.tiles[index]
-        if (!tile?.main.visible) continue
-        const key = tile.main.texture.key
-        if (key.includes('blink')) continue
-        tile.main.setTexture(`${key}-blink`)
-        this.time.delayedCall(130, () => {
-          if (tile.main.texture.key.endsWith('-blink')) tile.main.setTexture(key)
-        })
-      }
     }
   }
 }

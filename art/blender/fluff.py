@@ -3,12 +3,17 @@ Fluff Frenzy character renderer.
 
 Builds one shaggy pom-pom creature: a softly lumpy sphere under a coat of real
 3D fur strands, with embedded glossy eyes and a tiny mouth. The scene is lit
-like a plush product shot and rendered with a transparent alpha, so the frames
-drop straight into the Phaser board as 2D sprites.
+like a plush product shot and rendered with a transparent alpha.
+
+Unlike a still portrait, the fur is animated at the geometry level: every frame
+the strand tips are pushed by a wind field (roots pinned, tips trailing), the
+body breathes, squashes, leans and bounces, and the face changes expression.
+Each action renders to a numbered frame sequence that scripts/export-fluffs.mjs
+packs into the 4-column spritesheets Phaser plays.
 
 Usage (headless):
     blender -b --factory-startup --python art/blender/fluff.py -- \
-        --color ruby --action idle --frames 1 --out art/render --save-blend art/blender/fluff.blend
+        --color ruby --action wind --out art/render --save-blend art/blender/fluff.blend
 
 `--color all --action all` renders the full set and writes the .blend so the
 artwork stays reproducible.
@@ -35,12 +40,15 @@ COLORS = {
     "tangerine": ("#ff8a3d", "#ffc38c", "#c25a10"),
 }
 
+# Frame counts are multiples of four so export-fluffs.mjs can tile them into an
+# exact 4-column grid without padding.
 ACTIONS = {
-    # name: frames rendered for that expression
-    "idle": 6,
+    "idle": 12,
+    "wind": 8,
+    "squish": 8,
+    "happy": 8,
     "blink": 4,
-    "wow": 3,
-    "happy": 5,
+    "wow": 4,
 }
 
 SIZE = 384
@@ -49,6 +57,9 @@ STRANDS = 11000
 EYE_X = 0.34
 EYE_Z = 0.10
 MOUTH_Z = -0.30
+# How far the tips of the fur travel when the wind is at full strength.
+WIND_REACH = 0.19
+WIND_LIFT = 0.035
 
 
 def srgb_to_linear(channel: float) -> float:
@@ -72,13 +83,13 @@ def set_if(target: object, name: str, value: object) -> None:
         setattr(target, name, value)
 
 
-def reset_scene() -> None:
+def reset_scene(size: int) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE"
     scene.render.film_transparent = True
-    scene.render.resolution_x = SIZE
-    scene.render.resolution_y = SIZE
+    scene.render.resolution_x = size
+    scene.render.resolution_y = size
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
@@ -161,7 +172,12 @@ def face_clear(direction: Vector) -> bool:
     return True
 
 
-def add_fur(body: bpy.types.Object, base: str, light: str, dark: str) -> None:
+def add_fur(body: bpy.types.Object, base: str, light: str, dark: str) -> dict:
+    """
+    Builds the strand mesh and keeps the per-vertex data the wind animation
+    needs: the rest position, how far along a strand the vertex sits (weight)
+    and which strand owns it (for an independent flutter phase).
+    """
     body.data.materials.append(make_body_material("Undercoat", base, dark))
     base_rgb = rgb(base)
     light_rgb = rgb(light)
@@ -172,6 +188,9 @@ def add_fur(body: bpy.types.Object, base: str, light: str, dark: str) -> None:
     verts: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int, int]] = []
     colours: list[tuple[float, float, float, float]] = []
+    weights: list[float] = []
+    owners: list[int] = []
+    phases: list[float] = []
     rings = 3
     sides = 4
 
@@ -203,6 +222,11 @@ def add_fur(body: bpy.types.Object, base: str, light: str, dark: str) -> None:
         # Root darker, tip warmer: reads as depth in a small sprite.
         jitter = rng.uniform(0.82, 1.16)
         start_index = len(verts)
+        strand = len(phases)
+        phases.append(rng.uniform(0.0, math.tau))
+        # Fine strands react a little faster than thick ones.
+        phases[-1] = (phases[-1], rng.uniform(0.85, 1.2))
+
         for ring in range(rings + 1):
             t = ring / rings
             centre = direction * 0.98 + outward * (length * t) + bend * (length * 1.15 * t * t)
@@ -222,6 +246,9 @@ def add_fur(body: bpy.types.Object, base: str, light: str, dark: str) -> None:
                 point = centre + offset
                 verts.append((point.x, point.y, point.z))
                 colours.append((colour[0], colour[1], colour[2], 1.0))
+                # Roots stay put, tips take the full wind.
+                weights.append(t**1.6)
+                owners.append(strand)
 
         for ring in range(rings):
             for corner in range(sides):
@@ -246,7 +273,44 @@ def add_fur(body: bpy.types.Object, base: str, light: str, dark: str) -> None:
     bpy.context.view_layer.objects.active = fur
     bpy.ops.object.shade_smooth()
     fur.data.materials.append(make_fur_material("Fur"))
+
+    flat: list[float] = []
+    for x, y, z in verts:
+        flat.extend((x, y, z))
     print(f"[fluff] fur strands: {len(verts) // ((rings + 1) * sides)}", flush=True)
+    return {
+        "fur": fur,
+        "rest": flat,
+        "weights": weights,
+        "owners": owners,
+        "phases": phases,
+    }
+
+
+def apply_wind(fur_data: dict, amount: float, gust: float) -> None:
+    """
+    Pushes the strand tips along -X (the creature is travelling +X, so its fur
+    trails behind) with a per-strand flutter, then writes the mesh back.
+    """
+    fur = fur_data["fur"]
+    rest = fur_data["rest"]
+    weights = fur_data["weights"]
+    owners = fur_data["owners"]
+    phases = fur_data["phases"]
+    co = list(rest)
+
+    if amount > 0.001:
+        for index, weight in enumerate(weights):
+            if weight <= 0.0005:
+                continue
+            phase, speed = phases[owners[index]]
+            flutter = 1.0 + 0.3 * math.sin(phase + gust * speed)
+            push = weight * amount * flutter
+            co[index * 3] -= push * WIND_REACH
+            co[index * 3 + 2] += push * WIND_LIFT
+    fur.data.vertices.foreach_set("co", co)
+    fur.data.update()
+    bpy.context.view_layer.update()
 
 
 def make_eye_ball(name: str, x: float, z: float) -> tuple[bpy.types.Object, bpy.types.Object]:
@@ -340,44 +404,94 @@ def add_camera() -> None:
 
 
 def set_pose(parts: dict, action: str, frame: int, frames: int) -> None:
-    """Breathing, blinking and expression poses. None of this touches gameplay."""
+    """
+    Poses one frame. Everything here is presentation only: breathing, wind,
+    squash, bounce and expressions. Gameplay state never reads these numbers.
+    """
     phase = (frame / max(1, frames)) * math.tau
     body = parts["body"]
-    breathe = math.sin(phase) * 0.016
-
     left_eye = parts["left_eye"]
     right_eye = parts["right_eye"]
     mouth = parts["mouth"]
 
+    breathe = math.sin(phase) * 0.016
     body.scale = (1.0 + breathe, 0.96 - breathe * 0.4, 1.02 + breathe)
     body.location = (0.0, 0.0, breathe * 0.06)
+    body.rotation_euler = (0.0, 0.0, 0.0)
 
     for eye in (left_eye, right_eye):
         eye.scale = (0.19, 0.115, 0.205)
     mouth.scale = (0.078, 0.05, 0.038)
     mouth.location = (0.0, -0.93, MOUTH_Z)
 
-    if action == "blink":
-        close = [0.18, 0.03, 0.03, 0.18][min(frame, 3)]
+    wind = 0.0
+    gust = phase
+
+    if action == "idle":
+        # A slow idle sway plus a whisper of fur movement so the coat is alive.
+        sway = math.sin(phase) * 0.04
+        body.rotation_euler = (0.0, sway, 0.0)
+        wind = 0.06 + 0.035 * math.sin(phase * 2.0)
+        gust = phase
+    elif action == "blink":
+        # Frames 0..3: open, half, shut, half.
+        close = [0.18, 0.05, 0.03, 0.14][min(frame, 3)]
         for eye in (left_eye, right_eye):
             eye.scale = (0.19, 0.115, 0.205 * close)
+        wind = 0.05
     elif action == "wow":
         for eye in (left_eye, right_eye):
-            eye.scale = (0.225, 0.13, 0.245)
-        mouth.scale = (0.065, 0.05, 0.062)
-    elif action == "happy":
-        bounce = abs(math.sin(phase)) * 0.05
-        body.location = (0.0, 0.0, bounce + 0.02)
+            eye.scale = (0.235, 0.135, 0.255)
+        mouth.scale = (0.062, 0.05, 0.07)
+        # A quick startle hop, fur puffing out.
+        hop = math.sin(phase) * 0.05
+        body.location = (0.0, 0.0, hop + 0.02)
+        wind = 0.16 + 0.1 * math.cos(phase)
+        gust = phase * 2.0
+    elif action == "wind":
+        # The creature is being dragged to the right; its coat streams left.
+        ramp = frame / max(1, frames - 1)
+        strength = 0.35 + 0.65 * ramp
+        body.rotation_euler = (0.0, math.radians(9.0) * strength, 0.0)
+        body.scale = (1.0 + 0.05 * strength, 0.96 - 0.03 * strength, 1.02 - 0.04 * strength)
+        body.location = (0.035 * strength, 0.0, 0.01)
         for eye in (left_eye, right_eye):
-            eye.scale = (0.20, 0.115, 0.115)
-        mouth.scale = (0.10, 0.05, 0.072)
+            eye.scale = (0.20, 0.115, 0.15)
+        mouth.scale = (0.065, 0.05, 0.055)
+        wind = strength
+        gust = phase * 2.4
+    elif action == "squish":
+        # Landing: compress, overshoot, settle.
+        if frame <= 2:
+            squash = frame / 2.0
+            body.scale = (1.0 + 0.16 * squash, 0.96 + 0.12 * squash, 1.02 - 0.26 * squash)
+            body.location = (0.0, 0.0, -0.06 * squash)
+        elif frame <= 5:
+            stretch = (frame - 3) / 2.0
+            body.scale = (1.0 - 0.05 * stretch, 0.96 - 0.04 * stretch, 1.02 + 0.14 * stretch)
+            body.location = (0.0, 0.0, 0.05 * stretch)
+        else:
+            settle = (frame - 6) / 1.0
+            body.scale = (1.0 + 0.02 * settle, 0.96 - 0.02 * settle, 1.02 - 0.03 * settle)
+        wind = 0.12 + 0.1 * math.cos(phase)
+    elif action == "happy":
+        bounce = abs(math.sin(phase)) * 0.07
+        body.location = (0.0, 0.0, bounce + 0.02)
+        body.scale = (1.0 + 0.03 * math.sin(phase), 0.96, 1.02 + 0.05 * math.sin(phase))
+        for eye in (left_eye, right_eye):
+            eye.scale = (0.20, 0.115, 0.11)
+        mouth.scale = (0.10, 0.05, 0.078)
+        wind = 0.18 + 0.14 * math.sin(phase * 2.0)
+        gust = phase * 2.0
+
+    apply_wind(parts["fur_data"], wind, gust)
 
 
-def build(color_key: str) -> dict:
+def build(color_key: str, size: int) -> dict:
     base, light, dark = COLORS[color_key]
-    reset_scene()
+    reset_scene(size)
     body = make_body()
-    add_fur(body, base, light, dark)
+    fur_data = add_fur(body, base, light, dark)
     left_eye, left_glint = make_eye_ball("EyeL", EYE_X, EYE_Z)
     right_eye, right_glint = make_eye_ball("EyeR", -EYE_X, EYE_Z)
     mouth = make_mouth()
@@ -386,6 +500,7 @@ def build(color_key: str) -> dict:
     add_camera()
     return {
         "body": body,
+        "fur_data": fur_data,
         "left_eye": left_eye,
         "right_eye": right_eye,
         "left_glint": left_glint,
@@ -412,6 +527,7 @@ def main() -> None:
     parser.add_argument("--color", default="ruby")
     parser.add_argument("--action", default="idle")
     parser.add_argument("--frames", type=int, default=0)
+    parser.add_argument("--size", type=int, default=SIZE)
     parser.add_argument("--out", default="art/render")
     parser.add_argument("--save-blend", default="")
     args = parser.parse_args(argv)
@@ -420,7 +536,7 @@ def main() -> None:
     actions = list(ACTIONS) if args.action == "all" else [args.action]
 
     for color_key in colors:
-        parts = build(color_key)
+        parts = build(color_key, args.size)
         if args.save_blend:
             os.makedirs(os.path.dirname(args.save_blend) or ".", exist_ok=True)
             bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(args.save_blend))
